@@ -23,7 +23,7 @@ crontinental every 10m --name deploy-wait --until-done --until "4 hours" \
 or Intel). One static binary, no runtime, nothing else to install.
 
 ```
-curl -fsSL https://raw.githubusercontent.com/Techneosis/crontinental/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Techneosis/the-crontinental/main/install.sh | bash
 ```
 
 That fetches the latest release for your machine, checks it against the

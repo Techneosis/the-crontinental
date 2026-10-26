@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install Crontinental for the current user.
 #
-#   curl -fsSL https://raw.githubusercontent.com/Techneosis/crontinental/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/Techneosis/the-crontinental/main/install.sh | bash
 #
 # Run that way (or as a lone downloaded file) it fetches the latest release for
 # this machine, checks its SHA-256, unpacks it into
@@ -39,7 +39,7 @@
 # Paths are fixed: the tick runs ~/.local/bin/crontinental.
 set -euo pipefail
 
-repo=Techneosis/crontinental
+repo=Techneosis/the-crontinental
 releases=${CRONTINENTAL_RELEASES:-https://github.com/$repo/releases}
 data=${XDG_DATA_HOME:-$HOME/.local/share}/crontinental
 

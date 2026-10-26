@@ -1,4 +1,4 @@
-module github.com/Techneosis/crontinental
+module github.com/Techneosis/the-crontinental
 
 go 1.26.0
 

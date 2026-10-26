@@ -146,4 +146,4 @@ of something already scheduled. If a job's purpose goes away before its end
 does, `rm` it; finished jobs take care of themselves.
 
 Full reference: `docs/design.md` in the Crontinental repository
-(github.com/Techneosis/crontinental).
+(github.com/Techneosis/the-crontinental).
