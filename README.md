@@ -308,11 +308,28 @@ sits between marker comments, so a later install updates it in place and
 
 ## Why Not Book Elsewhere
 
-`systemd-run --on-calendar` will take a reservation on a napkin. The napkin
-is a transient timer, and transient timers are thrown out with the user
-manager, so "tomorrow at 9" vanishes at the next reboot without a trace. At
-the Crontinental only the *stays* are transient. The reservations are in the
-Ledger, and the Concierge is a permanent member of staff.
+Plenty of places will take a reservation on a napkin.
+
+- **`systemd-run --on-calendar`.** The napkin is a transient timer, and
+  transient timers are thrown out with the user manager, so "tomorrow at 9"
+  vanishes at the next reboot without a trace.
+- **An agent's own watchers.** A coding agent can loop, poll, set itself a
+  timer or keep an eye on a process (Claude Code's `/loop`, its cron and
+  monitor tools), and each of those lives inside the session. Close the
+  terminal, or let the conversation end, and the napkin goes out with the
+  tablecloth: the check-in an hour from now never happens, and nothing says
+  it was ever promised.
+- **The cloud.** Claude's own scheduler (the `schedule` skill, its routines)
+  keeps the reservation, but at another hotel: it runs on Anthropic's servers,
+  where there is no way into this building. No local files, no local tools, no
+  devices, no servers on `localhost`. The booking is safe; the guest just
+  can't get to the room.
+
+Each has its uses: the first two for something that only has to happen while
+you're sitting there, the cloud for work that never needs this building.
+Anything that has to outlast the evening *here* belongs in the Ledger. At the
+Crontinental only the *stays* are transient. The reservations are written
+down, and the Concierge is a permanent member of staff.
 
 ---
 

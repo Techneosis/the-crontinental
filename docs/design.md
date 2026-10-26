@@ -22,6 +22,17 @@ units die with the user manager — so a job scheduled for tomorrow morning
 evaporates at the next reboot, silently, with nothing to show that it was ever
 scheduled. On a rolling-release distro that is not a rare event.
 
+An agent's own scheduling forgets the same way, sooner. `/loop`, Claude Code's
+cron and monitor tools, and any poll an agent runs itself live inside the
+session: when it ends, so do they, and a promised check-in an hour out just
+never happens. They suit work that only matters while the session is open;
+anything that has to outlast it goes in the ledger.
+
+Claude's cloud scheduler (the `schedule` skill's routines) does persist, but
+it runs on Anthropic's servers, not this machine: no local files, tools,
+devices or `localhost` servers. It suits work that lives entirely in the
+cloud; anything that touches this machine is Crontinental's.
+
 So the three concerns are split deliberately:
 
 | concern | owner |
