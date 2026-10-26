@@ -188,6 +188,14 @@ directory on a first install and never touches it again, so one emptied on
 purpose stays empty; `show` says when a job would notify and nobody is wired to
 hear it. `notify/examples/` has ntfy and a webhook.
 
+A job can also speak for itself: `crontinental notify [--urgent] [--title T]
+<text>` sends a `message` event to the same hooks. exec runs every command with
+`CRONTINENTAL_JOB` set, so a message from inside a run carries the job (its
+note, its log command); from anywhere else the job is empty. A message goes out
+whatever `--notify` says, since `--notify` governs only the end-of-run reports,
+and it never touches the run's outcome. No hooks is said on stderr but exits 0,
+so a script under `set -e` doesn't die of it.
+
 A run has exactly one ending. On Linux a stop (`RuntimeMaxSec`, `rm`) signals
 `exec` and the command together, so the signal handler and the command's exit
 race to record it; a lock lets the first one write it down and notify, and a

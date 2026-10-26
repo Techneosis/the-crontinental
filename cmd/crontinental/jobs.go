@@ -352,6 +352,8 @@ func cmdExec(o *opts) {
 	banner(fmt.Sprintf("run started (due %s, late %ds)", dueAt.Local().Format("2006-01-02 15:04:05"), o.late))
 	cmd := exec.Command(shellArgv(j.Command)[0], shellArgv(j.Command)[1:]...)
 	cmd.Dir = workdir
+	// The job's name, so a `crontinental notify` inside it speaks as the job.
+	cmd.Env = append(os.Environ(), "CRONTINENTAL_JOB="+j.Name)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, os.Stdout, os.Stderr
 	// Its own process group, so a stop or a timeout reaches everything the
 	// command started, not just the shell.

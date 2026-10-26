@@ -10,6 +10,7 @@ reap jobs rather than dispatching them. So the suite runs anywhere Python, Go an
 
 import json
 import os
+import shlex
 import sqlite3
 import subprocess
 import tempfile
@@ -358,6 +359,40 @@ class Notify(Ledger):
         self.assertLess(time.time() - start, 20)
         self.assertIn("gave up", p.stderr)
         self.assertEqual(self.sql("SELECT outcome FROM run"), [("fail",)])
+
+    def test_a_message_from_anywhere(self):
+        out = self.recorder()
+        self.cli("notify", "disk is 91% full")
+        [(env, ev)] = self.calls(out)
+        self.assertEqual((ev["event"], ev["job"], ev["urgency"]), ("message", "", "low"))
+        self.assertEqual((ev["headline"], ev["body"]), ("Crontinental", "disk is 91% full"))
+        self.assertNotIn("log", ev)
+        self.assertNotIn("status", ev)
+
+    def test_urgent_and_title(self):
+        out = self.recorder()
+        self.cli("notify", "--urgent", "--title", "Deploy", "v1.4.2 is live")
+        [(env, ev)] = self.calls(out)
+        self.assertEqual((ev["urgency"], ev["headline"], env["CRONTINENTAL_URGENCY"]),
+                         ("critical", "Deploy", "critical"))
+
+    def test_a_message_from_inside_a_job_is_the_jobs_even_with_notify_never(self):
+        out = self.recorder()
+        p = self.run_job(f"{shlex.quote(BIN)} notify 'backup took 3h'; exit 0",
+                         "--notify", "never", "--note", "nightly")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        [(env, ev)] = self.calls(out)  # the message, and no end-of-run report
+        self.assertEqual((ev["event"], ev["job"], ev["headline"], ev["note"], ev["log"]),
+                         ("message", "j", "j", "nightly", "crontinental log j"))
+        self.assertEqual(self.sql("SELECT outcome FROM run"), [("ok",)])
+
+    def test_nobody_to_tell_is_said_but_not_an_error(self):
+        p = self.cli("notify", "hello")
+        self.assertIn("nobody was told", p.stderr)
+
+    def test_a_message_needs_words(self):
+        self.assertNotEqual(self.cli("notify", " ", ok=False).returncode, 0)
+        self.assertEqual(self.cli("notify", ok=False).returncode, 2)
 
     def test_show_says_where_notifications_go(self):
         self.cli("every", "1h", "--name", "j", "--forever", "--", "true")

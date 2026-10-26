@@ -249,8 +249,8 @@ wants it whole, as JSON on stdin:
 
 | variable | |
 |---|---|
-| `CRONTINENTAL_EVENT` | `fail`, `killed`, `error`, `unstartable`, `done`, `ok` |
-| `CRONTINENTAL_JOB` | the guest's name |
+| `CRONTINENTAL_EVENT` | `fail`, `killed`, `error`, `unstartable`, `done`, `ok`, `message` |
+| `CRONTINENTAL_JOB` | the guest's name (empty for a message from outside any stay) |
 | `CRONTINENTAL_STATUS`, `_ELAPSED` | exit status and seconds, when there are any |
 | `CRONTINENTAL_URGENCY` | `critical` for trouble, `low` otherwise |
 | `CRONTINENTAL_HEADLINE`, `_BODY` | the message, ready to show |
@@ -260,6 +260,24 @@ So a phone is three lines of shell. `notify/examples/` has an
 [ntfy](https://ntfy.sh) extension and a webhook that posts the JSON as it
 comes. Each call gets ten seconds; an extension's own output, and any failure,
 lands in the guest's logbook.
+
+**Ringing down from the room.** A guest can call the Management themselves,
+mid-stay, with whatever they have to say:
+
+```
+crontinental notify "backup took 3h, disk is 91% full"
+crontinental notify --urgent "prod cert expires in 5 days"
+crontinental notify --title "Deploy" "v1.4.2 is live"
+```
+
+Every stay knows its own room number (`CRONTINENTAL_JOB`), so the call goes
+through as that guest's, with their note and their logbook. It goes through
+whatever `--notify` says, which governs only the reports at checkout:
+`--notify never` with a call of your own is a guest who is quiet about routine
+trouble and speaks up only when it matters. A call is a call, not a checkout,
+so it never changes how the stay is written down. From outside the building
+(any script, any agent) the same line rings the same extensions, under no
+guest's name.
 
 ---
 
@@ -276,6 +294,7 @@ crontinental disable <name>    hold the room; a held room is never cleaned
 crontinental enable <name>     release it; a checked-out regular can be re-booked
 crontinental rm <name>         show them out now, mid-stay if need be
 crontinental prune             send the cleaners up early
+crontinental notify "…"        ring the Management, through the switchboard
 ```
 
 ---

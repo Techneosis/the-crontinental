@@ -72,27 +72,34 @@ func hooks() []string {
 // event is what a hook is told. Status and Elapsed are absent when there is
 // none (a run that never started has no exit status).
 type event struct {
-	Event    string `json:"event"` // fail, killed, error, unstartable, done, ok
-	Job      string `json:"job"`
+	Event    string `json:"event"` // fail, killed, error, unstartable, done, ok, message
+	Job      string `json:"job"`   // empty for a message sent from outside any job
 	Status   *int   `json:"status,omitempty"`
 	Elapsed  *int   `json:"elapsed,omitempty"`
 	Urgency  string `json:"urgency"` // critical or low
 	Headline string `json:"headline"`
 	Body     string `json:"body"`
-	Log      string `json:"log"` // the command that shows the job's output
+	Log      string `json:"log,omitempty"` // the command that shows the job's output
 	Note     string `json:"note,omitempty"`
 	Host     string `json:"host"`
 }
 
-// notify tells every hook about ev. It returns when they have all finished or
-// been given up on.
-func notify(j *Job, kind, headline, body string, critical bool, status, elapsed *int) {
+// notify tells every hook about ev, and returns how many it told (once they
+// have all finished or been given up on). j may be nil: a message from outside
+// any job.
+func notify(j *Job, kind, headline, body string, critical bool, status, elapsed *int) int {
 	hs := hooks()
 	if len(hs) == 0 {
-		return
+		return 0
+	}
+	if j == nil {
+		j = &Job{}
 	}
 	ev := event{Event: kind, Job: j.Name, Status: status, Elapsed: elapsed, Urgency: "low",
-		Headline: headline, Body: body, Log: "crontinental log " + j.Name}
+		Headline: headline, Body: body}
+	if j.Name != "" {
+		ev.Log = "crontinental log " + j.Name
+	}
 	if critical {
 		ev.Urgency = "critical"
 	}
@@ -123,6 +130,35 @@ func notify(j *Job, kind, headline, body string, critical bool, status, elapsed 
 		}(h)
 	}
 	wg.Wait()
+	return len(hs)
+}
+
+// cmdNotify is a message on request: from inside a job (exec sets
+// CRONTINENTAL_JOB, so it goes out as that job's) or from anywhere else. It is
+// sent whatever the job's --notify says; that only governs the reports at the
+// end of a run. Nobody to tell is said on stderr but is not an error, so a
+// script under `set -e` doesn't die of a quiet switchboard.
+func cmdNotify(o *opts) {
+	if strings.TrimSpace(o.text) == "" {
+		die("nothing to say")
+	}
+	var j *Job
+	if name := os.Getenv("CRONTINENTAL_JOB"); name != "" {
+		j = lookupJob(connect(), name)
+		if j == nil {
+			j = &Job{Name: name} // removed mid-run: still the job's word
+		}
+	}
+	title := o.title
+	if title == "" {
+		title = "Crontinental"
+		if j != nil {
+			title = j.Name
+		}
+	}
+	if notify(j, "message", title, o.text, o.urgent, nil, nil) == 0 {
+		fmt.Fprintf(os.Stderr, "crontinental: nobody was told: no hooks in %s\n", notifyDir())
+	}
 }
 
 func runHook(path string, env []string, payload []byte) {

@@ -177,6 +177,17 @@ func mustExec(db *sql.DB, q string, args ...any) sql.Result {
 	return r
 }
 
+// lookupJob is getJob for a job that may not be there.
+func lookupJob(db *sql.DB, name string) *Job {
+	j, err := scanJob(db.QueryRow("SELECT "+jobCols+" FROM job WHERE name=?", name))
+	if err == sql.ErrNoRows {
+		return nil
+	} else if err != nil {
+		die("ledger: %v", err)
+	}
+	return j
+}
+
 func getJob(db *sql.DB, name string) *Job {
 	j, err := scanJob(db.QueryRow("SELECT "+jobCols+" FROM job WHERE name=?", name))
 	if err == sql.ErrNoRows {

@@ -131,6 +131,12 @@ minute; that is the tick.
   notification goes (desktop, phone, webhook) is the user's hooks in
   `~/.config/crontinental/notify.d/`, not a job setting; `show <name>` names
   them, or says nobody is told. Don't add or change hooks unless asked.
+- **A job can say something itself.** When the user wants to hear a result, not
+  just a failure ("tell me what the backup found", "let me know when it's
+  live"), put `crontinental notify "…"` in the command at that point. It goes to
+  the same hooks as the job's own message, whatever `--notify` says (`--notify
+  never` plus an explicit notify = quiet unless it matters). `--urgent` marks it
+  critical, `--title` replaces the job name as the headline.
 
 ## Clean up after yourself
 

@@ -58,6 +58,10 @@ type opts struct {
 	days              int
 	due               string
 	late              int64
+
+	// notify
+	text, title string
+	urgent      bool
 }
 
 const usage = `usage: crontinental <verb> ...
@@ -83,6 +87,8 @@ verbs:
   edit <name> ...     change a job in place, keeping its history (see below)
   prune [--days N]    drop finished jobs now (the tick does it after 3 days)
   check <spec> [-n N] how a spec reads (calendar, interval or time) and when it fires
+  notify [--urgent] [--title T] <text>   tell the notify hooks something, now;
+                      inside a job it is sent as that job's (see below)
   path                print the ledger path
   version             which build this is
 
@@ -112,6 +118,10 @@ A repeat must end: --until <time>, --until-done (the command exits
 
 Everything after ` + "`--`" + ` is the command. One argument is taken as a
 shell line (pipes and && work); several are taken as an argv.
+A job can send its own word with "crontinental notify" at any point: the
+command runs with CRONTINENTAL_JOB set, so the message carries the job. That
+goes out whatever --notify says, which only governs the end-of-run reports.
+
 Every job runs in a login shell (bash -lc on Linux, your own login shell on
 macOS), so PATH is the one your terminal has.
 `
@@ -147,10 +157,11 @@ var verbFlags = map[string]map[string]flagSpec{
 	"log":   {"--lines": {true, nil}, "--follow": {false, nil}},
 	"prune": {"--days": {true, nil}},
 	"tick":  {}, "path": {},
-	"edit":  editFlags,
-	"check": {"--count": {true, nil}, "--lines": {true, nil}},
-	"exec":  {"--due": {true, nil}, "--late": {true, nil}},
-	"names": {"--enabled": {false, nil}, "--disabled": {false, nil}},
+	"edit":   editFlags,
+	"check":  {"--count": {true, nil}, "--lines": {true, nil}},
+	"exec":   {"--due": {true, nil}, "--late": {true, nil}},
+	"names":  {"--enabled": {false, nil}, "--disabled": {false, nil}},
+	"notify": {"--urgent": {false, nil}, "--title": {true, nil}},
 }
 
 var editFlags = func() map[string]flagSpec {
@@ -173,6 +184,7 @@ var verbArgs = map[string][]string{
 	"in": {"when"}, "at": {"when"}, "every": {"when"}, "check": {"when"},
 	"show": {"name"}, "log": {"name"}, "run": {"name"}, "rm": {"name"},
 	"enable": {"name"}, "disable": {"name"}, "exec": {"name"}, "edit": {"name"},
+	"notify": {"text"},
 }
 
 func parse(argv []string) *opts {
@@ -203,7 +215,7 @@ func parse(argv []string) *opts {
 	o.verb = argv[0]
 	flags, ok := verbFlags[o.verb]
 	if !ok {
-		usageErr("", "invalid choice: %q (choose from in, at, every, list, show, edit, log, run, rm, enable, disable, prune, check, path)", o.verb)
+		usageErr("", "invalid choice: %q (choose from in, at, every, list, show, edit, log, run, rm, enable, disable, prune, check, notify, path)", o.verb)
 	}
 
 	var pos []string
@@ -262,6 +274,8 @@ func parse(argv []string) *opts {
 			o.when = pos[i]
 		case "name":
 			o.name = pos[i]
+		case "text":
+			o.text = pos[i]
 		}
 	}
 
@@ -279,6 +293,7 @@ func parse(argv []string) *opts {
 	o.untilDone, o.forever, o.now = bools["--until-done"], bools["--forever"], bools["--now"]
 	o.all, o.json, o.follow = bools["--all"], bools["--json"], bools["--follow"]
 	o.enabled, o.disabled = bools["--enabled"], bools["--disabled"]
+	o.urgent, o.title = bools["--urgent"], set["--title"]
 	if o.enabled && o.disabled {
 		usageErr(o.verb, "argument --disabled: not allowed with argument --enabled")
 	}
@@ -346,6 +361,8 @@ func main() {
 		cmdExec(o)
 	case "names":
 		cmdNames(o)
+	case "notify":
+		cmdNotify(o)
 	case "check":
 		cmdCheck(o)
 	case "path":
