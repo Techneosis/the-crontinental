@@ -64,8 +64,9 @@ type whenParts struct {
 	dow, ord                 int // dow: Go weekday; ord: 0 this/plain, 1 next, -1 last
 	relY, relM, relD         int
 	relSec                   int64
-	lastRel                  func() // undoes and re-applies the last relative item negated ("ago")
-	loc                      *time.Location
+	lastRel                  func()         // undoes and re-applies the last relative item negated ("ago")
+	loc                      *time.Location // the zone the given fields are read in ("UTC" sets it)
+	local                    *time.Location // the zone the fields not given come from
 	epoch                    *time.Time
 }
 
@@ -79,7 +80,7 @@ func parseWhenAt(spec string, base time.Time, loc *time.Location) (time.Time, er
 	if len(toks) == 0 {
 		return time.Time{}, whenErr(spec)
 	}
-	p := &whenParts{loc: loc}
+	p := &whenParts{loc: loc, local: loc}
 	bad := func() (time.Time, error) { return time.Time{}, whenErr(spec) }
 
 	for i := 0; i < len(toks); i++ {
@@ -141,7 +142,7 @@ func parseWhenAt(spec string, base time.Time, loc *time.Location) (time.Time, er
 					return bad()
 				}
 				i++
-				y := base.In(p.loc).Year()
+				y := base.In(loc).Year()
 				if yy := peek(1); len(yy) == 4 && allDigits(yy) {
 					y, _ = strconv.Atoi(yy)
 					i++
@@ -165,7 +166,7 @@ func parseWhenAt(spec string, base time.Time, loc *time.Location) (time.Time, er
 				if p.hasDate {
 					return bad()
 				}
-				y := base.In(p.loc).Year()
+				y := base.In(loc).Year()
 				if m[3] != "" {
 					y = atoi(m[3])
 				}
@@ -202,7 +203,7 @@ func parseWhenAt(spec string, base time.Time, loc *time.Location) (time.Time, er
 						return bad()
 					}
 					i++
-					y := base.In(p.loc).Year()
+					y := base.In(loc).Year()
 					if yy := peek(1); len(yy) == 4 && allDigits(yy) {
 						y, _ = strconv.Atoi(yy)
 						i++
@@ -224,6 +225,15 @@ func parseWhenAt(spec string, base time.Time, loc *time.Location) (time.Time, er
 			}
 			return bad()
 		}
+	}
+	// A zone and nothing else is midnight in it, as in GNU (where "now" and
+	// "today" are relative items, so "now UTC" keeps the clock).
+	zoneOnly := true
+	for _, t := range toks {
+		zoneOnly = zoneOnly && t == "utc"
+	}
+	if zoneOnly {
+		p.hasTime = true
 	}
 	return p.resolve(spec, base)
 }
@@ -310,7 +320,11 @@ func (p *whenParts) resolve(spec string, base time.Time) (time.Time, error) {
 	if p.hasDate && p.hasDow {
 		return time.Time{}, fmt.Errorf("the time %q names both a date and a weekday; give one", spec)
 	}
-	b := base.In(p.loc)
+	// GNU's rule for a named zone: the fields the spec leaves out (the date,
+	// the weekday, the clock) are the local ones, and only the result is read
+	// in that zone. Taking them from the zone's own now picks the wrong day
+	// whenever the two dates differ.
+	b := base.In(p.local)
 	y, m, d := b.Date()
 	h, mi, s := b.Clock()
 	if p.hasDate {

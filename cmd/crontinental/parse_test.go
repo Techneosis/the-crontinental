@@ -239,13 +239,16 @@ func TestWhenAgainstGNUDate(t *testing.T) {
 		"1 days", "1 mins", "2 secs", "+1 day", "-1 day", "Friday", "FRIDAY", "next Friday 6pm",
 		"today 23:59", "mon 10:00", "10/24/2026", "10/24", "Oct 24", "Oct 24 2026 10:00",
 		"24 Oct", "24 october 2027", "@1800000000", "2026-10-24 10:00 UTC", "10:00 UTC",
+		"UTC", "now UTC", "tomorrow 10:00 UTC", "friday UTC", "Oct 24 UTC", "3 days UTC",
 		"thursday next week", "2026-11-01 01:30", "2026-10-31 07:00 1 day", "2027-01-31 1 month",
 		"2028-02-29 1 year", "fortnight", "2 fortnights", "1 week ago", "week", "day", "hour",
 		"month", "year", "minute", "second", "next fortnight", "week ago", "tomorrow week",
 		// refusals
 		"noon", "midnight", "in 2 hours", "13pm", "24:00", "2026-10-23 25:00", "1 hr",
 		"1.5 hours", "ago", "friday friday", "2027-03-14 02:30", "garbage"}
-	zones := []string{"America/New_York", "UTC", "Asia/Kolkata"}
+	// +14 and -11 keep a zone on a different date from UTC at every hour, so a
+	// date taken from the wrong zone fails here whenever the test runs.
+	zones := []string{"America/New_York", "UTC", "Asia/Kolkata", "Pacific/Kiritimati", "Pacific/Pago_Pago"}
 	for _, zone := range zones {
 		loc, _ := time.LoadLocation(zone)
 		for _, s := range corpus {
@@ -404,6 +407,34 @@ func TestWhenFixed(t *testing.T) {
 	for _, bad := range []string{"2026-09-15 friday", "1h", "noon", "2027-03-14 02:30", "friday friday"} {
 		if got, err := parseWhenAt(bad, base, ny); err == nil {
 			t.Errorf("%q: accepted as %s", bad, got.In(ny))
+		}
+	}
+}
+
+// A named zone reads the given fields in that zone, but the fields it does not
+// give (the date, the weekday, a clock with no time) are the local ones, as in
+// GNU. These answers are GNU's, taken at a moment when the two dates differ,
+// which the differential test only sees for part of each day.
+func TestWhenZoneKeepsTheLocalDate(t *testing.T) {
+	ist := mustLoc(t, "Asia/Kolkata")
+	base := at(t, ist, "2026-10-27 03:01:48") // a Tuesday; still Monday in UTC
+	cases := map[string]string{
+		"10:00 UTC":           "2026-10-27 10:00:00",
+		"UTC":                 "2026-10-27 00:00:00",
+		"now UTC":             "2026-10-27 03:01:48",
+		"tomorrow UTC":        "2026-10-28 03:01:48",
+		"tomorrow 10:00 UTC":  "2026-10-28 10:00:00",
+		"tuesday UTC":         "2026-10-27 00:00:00",
+		"wednesday 10:00 UTC": "2026-10-28 10:00:00",
+		"2026-10-24 UTC":      "2026-10-24 00:00:00",
+		"3 days UTC":          "2026-10-30 03:01:48",
+		"1 hour UTC":          "2026-10-27 04:01:48",
+		"10:00 UTC 1 day":     "2026-10-28 10:00:00",
+	}
+	for s, w := range cases {
+		got, err := parseWhenAt(s, base, ist)
+		if want := at(t, time.UTC, w); err != nil || !got.Equal(want) {
+			t.Errorf("%q: want %s UTC, got %s (%v)", s, w, got.UTC(), err)
 		}
 	}
 }
