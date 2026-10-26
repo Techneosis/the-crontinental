@@ -81,7 +81,8 @@ leaves together, and the books record them as `killed`.
 **4. The Management is told when there is trouble.** A guest who leaves badly,
 with any exit but 0 or 99, is reported at once: name, exit code, and where to
 read the logbook. `--notify always` reports good departures too.
-`--notify never` is for regulars who come and go every few minutes.
+`--notify never` is for regulars who come and go every few minutes. *Who*
+takes the call is up to the Management: see [The Switchboard](#the-switchboard).
 
 **5. The books are kept.** The register records who made every booking: a
 Claude Code session (from `CLAUDE_CODE_SESSION_ID`), or the user. `list` is a walk down the hall past every
@@ -133,7 +134,7 @@ The house rules are the same in both; the plumbing is local.
 | the time limit | systemd's `RuntimeMaxSec` | the Steward, who clears the whole party out |
 | the logbook | the journal | `~/Library/Logs/crontinental/<name>.log`, in Console.app |
 | room service | `bash -lc` | the guest's own login shell |
-| word to the Management | the desktop's notifications | Notification Center |
+| the switchboard's first extension | `notify-send` (Omarchy's own sender where it has one) | Notification Center |
 
 On macOS a guest who must leave early (`rm`) is asked by the Steward, and
 shown out with their whole party if they don't go.
@@ -227,6 +228,38 @@ came due, and each guest's `--catchup` decides what happens:
 
 A standing guest is always rebooked from *now*. A day asleep costs at most one
 visit, never a queue in the lobby.
+
+---
+
+## The Switchboard
+
+The house decides *when* the Management hears about a guest. The Management
+decides where the call rings. Every report goes to the extensions wired into
+the switchboard, `~/.config/crontinental/notify.d/`: each executable there is
+rung in turn (well, all at once), and a missing, broken or slow extension never
+changes how a stay is written down.
+
+The installer wires one extension on a first install, `desktop`, a copy that is
+yours to change. Delete it and the desktop goes quiet; add a script beside it
+and the calls go there too. A switchboard with nothing wired is allowed, and
+`show` says so: `notify  fail, but nobody is told`.
+
+An extension hears the call as environment variables and, for anything that
+wants it whole, as JSON on stdin:
+
+| variable | |
+|---|---|
+| `CRONTINENTAL_EVENT` | `fail`, `killed`, `error`, `unstartable`, `done`, `ok` |
+| `CRONTINENTAL_JOB` | the guest's name |
+| `CRONTINENTAL_STATUS`, `_ELAPSED` | exit status and seconds, when there are any |
+| `CRONTINENTAL_URGENCY` | `critical` for trouble, `low` otherwise |
+| `CRONTINENTAL_HEADLINE`, `_BODY` | the message, ready to show |
+| `CRONTINENTAL_LOG`, `_NOTE`, `_HOST` | how to read the logbook, the booking's note, this machine |
+
+So a phone is three lines of shell. `notify/examples/` has an
+[ntfy](https://ntfy.sh) extension and a webhook that posts the JSON as it
+comes. Each call gets ten seconds; an extension's own output, and any failure,
+lands in the guest's logbook.
 
 ---
 

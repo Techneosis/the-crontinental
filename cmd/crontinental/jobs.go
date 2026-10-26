@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -328,10 +329,17 @@ func cmdExec(o *opts) {
 		mustExec(db, "UPDATE run SET finished_at=?, status=?, outcome=?, detail=? WHERE id=?",
 			iso(now()), status, outcome, nullIfEmpty(detail), runID)
 	}
+	// One ending per run. On Linux a stop reaches this process and the command
+	// at the same moment, so the signal handler and the command's own exit race
+	// to write it down; whoever takes this first records the ending and exits,
+	// and the other waits here until it does.
+	var ending sync.Mutex
 	killed := func(sig syscall.Signal, detail string) {
+		ending.Lock() // never released: os.Exit below
 		finish(128+int(sig), "killed", detail)
 		if j.Notify != "never" {
-			notify("Scheduled job killed", fmt.Sprintf("%s hit its %ds limit", j.Name, j.TimeoutSec), true)
+			notify(j, "killed", "Scheduled job killed", fmt.Sprintf("%s hit its %ds limit", j.Name, j.TimeoutSec), true,
+				intp(128+int(sig)), intp(int(now().Sub(started).Seconds())))
 		}
 		banner("killed: " + detail)
 		os.Exit(128 + int(sig))
@@ -383,9 +391,17 @@ func cmdExec(o *opts) {
 	if r, ok := stopReason.Load().(string); ok {
 		killed(syscall.SIGTERM, r)
 	}
+	var exitErr *exec.ExitError
+	if !selfManaged && errors.As(err, &exitErr) {
+		// SIGTERM to the command is the unit being stopped (RuntimeMaxSec, or
+		// rm): the same ending the signal handler records, whichever sees it first.
+		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() && ws.Signal() == syscall.SIGTERM {
+			killed(syscall.SIGTERM, "stopped by signal 15")
+		}
+	}
+	ending.Lock() // never released: every path below ends in os.Exit
 
 	status := 0
-	var exitErr *exec.ExitError
 	switch {
 	case err == nil:
 	case errors.As(err, &exitErr):
@@ -397,7 +413,7 @@ func cmdExec(o *opts) {
 	default: // the command could not be started at all; the run must still record why
 		finish(-1, "error", truncate(err.Error(), 500))
 		if j.Notify != "never" {
-			notify("Scheduled job errored", truncate(j.Name+": "+err.Error(), 160), true)
+			notify(j, "error", "Scheduled job errored", truncate(j.Name+": "+err.Error(), 160), true, nil, nil)
 		}
 		banner("could not start: " + err.Error())
 		os.Exit(1)
@@ -411,7 +427,8 @@ func cmdExec(o *opts) {
 		finish(status, "done", "")
 		finishJob(db, j.ID)
 		if j.Notify == "always" {
-			notify("Scheduled job finished", fmt.Sprintf("%s reported done after %ds", j.Name, elapsed), false)
+			notify(j, "done", "Scheduled job finished", fmt.Sprintf("%s reported done after %ds", j.Name, elapsed), false,
+				intp(status), intp(elapsed))
 		}
 		banner(fmt.Sprintf("done (exit %d) after %ds", doneExit, elapsed))
 		os.Exit(0) // done is success; the run should not show as failed
@@ -423,10 +440,11 @@ func cmdExec(o *opts) {
 	}
 	finish(status, outcome, "")
 	if status != 0 && (j.Notify == "fail" || j.Notify == "always") {
-		notify("Scheduled job failed", fmt.Sprintf("%s exited %d after %ds — crontinental log %s",
-			j.Name, status, elapsed, j.Name), true)
+		notify(j, "fail", "Scheduled job failed", fmt.Sprintf("%s exited %d after %ds — crontinental log %s",
+			j.Name, status, elapsed, j.Name), true, intp(status), intp(elapsed))
 	} else if status == 0 && j.Notify == "always" {
-		notify("Scheduled job done", fmt.Sprintf("%s finished in %ds", j.Name, elapsed), false)
+		notify(j, "ok", "Scheduled job done", fmt.Sprintf("%s finished in %ds", j.Name, elapsed), false,
+			intp(status), intp(elapsed))
 	}
 	banner(fmt.Sprintf("exit %d after %ds", status, elapsed))
 	os.Exit(status & 0xff) // the run's own exit should mirror the job's

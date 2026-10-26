@@ -22,7 +22,7 @@ for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   mkdir -p "$dir/build"
   (cd "$root" && CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -trimpath \
     -ldflags "-s -w -X main.version=$version" -o "$dir/build/crontinental" ./cmd/crontinental)
-  cp -R "$root/completions" "$root/systemd" "$root/launchd" "$root/agents" "$dir/"
+  cp -R "$root/completions" "$root/systemd" "$root/launchd" "$root/agents" "$root/notify" "$dir/"
   mkdir -p "$dir/docs"
   cp "$root/install.sh" "$root/LICENSE" "$root/README.md" "$dir/"
   cp "$root/docs/design.md" "$dir/docs/"

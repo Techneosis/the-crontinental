@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -195,7 +196,7 @@ func cmdShow(o *opts) {
 	}
 	fmt.Printf("catchup     %s  (a fire >%ds late is %s)\n", j.Catchup, graceSec, verdict)
 	fmt.Printf("timeout     %ds\n", j.TimeoutSec)
-	fmt.Printf("notify      %s\n", j.Notify)
+	fmt.Printf("notify      %s\n", describeNotify(j.Notify))
 	if j.Enabled != 0 {
 		fmt.Printf("enabled     yes\n")
 	} else {
@@ -315,4 +316,22 @@ func cmdPrune(o *opts) {
 	n, _ := res.RowsAffected()
 	mustExec(db, "VACUUM")
 	fmt.Printf("pruned %d finished job(s) older than %dd\n", n, o.days)
+}
+
+// describeNotify says who hears about a job: --notify is when, the hooks are
+// where. A job that should notify with no hooks installed is said out loud,
+// since nothing else would ever show it.
+func describeNotify(when string) string {
+	if when == "never" {
+		return "never"
+	}
+	hs := hooks()
+	if len(hs) == 0 {
+		return fmt.Sprintf("%s, but nobody is told: no hooks in %s", when, notifyDir())
+	}
+	var names []string
+	for _, h := range hs {
+		names = append(names, filepath.Base(h))
+	}
+	return fmt.Sprintf("%s → %s", when, strings.Join(names, ", "))
 }

@@ -1,0 +1,30 @@
+#!/bin/sh
+# Crontinental notify hook: a desktop notification.
+#
+# install.sh copies this into ~/.config/crontinental/notify.d/ on first install.
+# It is yours from then on: edit it, replace it, or delete it for no desktop
+# notifications. See notify/examples/ for other places to send them.
+#
+# The event arrives as CRONTINENTAL_* variables (and as JSON on stdin):
+# EVENT, JOB, STATUS, ELAPSED, URGENCY (critical|low), HEADLINE, BODY, LOG,
+# NOTE, HOST.
+
+case $(uname -s) in
+  Darwin)
+    sound=""
+    [ "$CRONTINENTAL_URGENCY" = critical ] && sound=' sound name "Basso"'
+    # The text goes in as arguments, never spliced into the script.
+    exec /usr/bin/osascript -e 'on run argv' \
+      -e "display notification (item 2 of argv) with title (item 1 of argv)$sound" \
+      -e 'end run' "$CRONTINENTAL_HEADLINE" "$CRONTINENTAL_BODY" ;;
+  *)
+    # Omarchy's own sender where it exists (it survives that desktop's
+    # notification changes); everywhere else the freedesktop standard.
+    if command -v omarchy-notification-send >/dev/null 2>&1; then
+      exec omarchy-notification-send -g 󰃰 -u "$CRONTINENTAL_URGENCY" \
+        "$CRONTINENTAL_HEADLINE" "$CRONTINENTAL_BODY"
+    elif command -v notify-send >/dev/null 2>&1; then
+      exec notify-send -a crontinental -u "$CRONTINENTAL_URGENCY" \
+        "$CRONTINENTAL_HEADLINE" "$CRONTINENTAL_BODY"
+    fi ;;
+esac

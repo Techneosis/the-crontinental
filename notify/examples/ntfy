@@ -1,0 +1,20 @@
+#!/bin/sh
+# Crontinental notify hook: a push to your phone through ntfy (https://ntfy.sh).
+#
+#   cp notify/examples/ntfy ~/.config/crontinental/notify.d/ntfy
+#
+# then set TOPIC below (anyone who knows a topic on ntfy.sh can read it, so
+# make it unguessable), or point SERVER at your own ntfy.
+
+SERVER=https://ntfy.sh
+TOPIC=change-me
+
+priority=default
+[ "$CRONTINENTAL_URGENCY" = critical ] && priority=high
+
+exec curl -fsS -o /dev/null \
+  -H "Title: $CRONTINENTAL_HEADLINE" \
+  -H "Priority: $priority" \
+  -H "Tags: $CRONTINENTAL_EVENT,$CRONTINENTAL_HOST" \
+  -d "$CRONTINENTAL_BODY" \
+  "$SERVER/$TOPIC"

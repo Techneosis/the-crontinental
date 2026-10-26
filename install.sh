@@ -31,6 +31,11 @@
 # in place, never replaced, so a CLAUDE.md that is itself a symlink (dotfiles)
 # stays one.
 #
+# Notifications are hooks in ~/.config/crontinental/notify.d/. A first install
+# copies in a desktop hook (a copy, not a link: it is the user's to change);
+# after that the directory is left alone, so one emptied on purpose stays
+# empty, and --uninstall leaves it like the ledger.
+#
 # Paths are fixed: the tick runs ~/.local/bin/crontinental.
 set -euo pipefail
 
@@ -55,6 +60,7 @@ fi
 bin=$HOME/.local/bin
 units=${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user
 comp=${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions
+hooks=${XDG_CONFIG_HOME:-$HOME/.config}/crontinental/notify.d
 claude=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
 
 BEGIN='<!-- crontinental:begin (managed by crontinental/install.sh; edit agents/claude-md-snippet.md upstream, not here) -->'
@@ -243,7 +249,7 @@ case $uninstall$claude_only in
     [[ $os == Linux ]] && systemctl --user daemon-reload
     claude_uninstall
     if [[ -d $data/dist ]]; then rm -rf "${data:?}/dist" && echo "removed $data/dist"; fi
-    echo "uninstalled; the ledger is left at $data/"
+    echo "uninstalled; the ledger is left at $data/ and the notify hooks at $hooks/"
     exit 0 ;;
 esac
 
@@ -274,6 +280,12 @@ fi
 for pair in "${links[@]}"; do
   link "${pair%%:*}" "${pair#*:}"
 done
+
+if [[ ! -e $hooks ]]; then
+  mkdir -p "$hooks"
+  cp "$src/notify/desktop" "$hooks/desktop"
+  echo "added a desktop notify hook: $hooks/desktop (more in $src/notify/examples/)"
+fi
 
 if [[ $os == Darwin ]]; then
   # The plist is written, not linked: launchd needs absolute paths in it.

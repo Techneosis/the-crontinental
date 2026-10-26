@@ -127,7 +127,10 @@ minute; that is the tick.
   refused and recorded as `overlap`.
 - **Failures notify the user** (critical, with the job name and exit code).
   `--notify always` also announces successes and `--notify never` stays silent.
-  Use `never` for anything frequent, or the desktop gets noisy.
+  Use `never` for anything frequent, or the desktop gets noisy. Where a
+  notification goes (desktop, phone, webhook) is the user's hooks in
+  `~/.config/crontinental/notify.d/`, not a job setting; `show <name>` names
+  them, or says nobody is told. Don't add or change hooks unless asked.
 
 ## Clean up after yourself
 

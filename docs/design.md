@@ -160,9 +160,27 @@ There is no lockfile to go stale. The refusal is recorded as an `overlap` run.
 enforced as `RuntimeMaxSec` on the transient unit, and the kill is caught and
 written down (`killed`, exit 143) rather than leaving a run row open forever.
 
-**Failures notify** (`omarchy-notification-send`, critical) with the job name,
-its exit code, and the command to read its log. `--notify always` also announces
-successes; `--notify never` stays quiet.
+**Failures notify**, with the job name, its exit code, and the command to read
+its log. `--notify always` also announces successes; `--notify never` stays
+quiet. That is all the binary decides: *when*. *Where* is hooks, the
+executables in `~/.config/crontinental/notify.d/` (`CRONTINENTAL_NOTIFY_DIR`
+overrides it; the tests use that). Each gets the event as `CRONTINENTAL_*`
+variables and as JSON on stdin, they run side by side, and each has 10s. A hook
+that fails, hangs or is missing never changes a run's outcome; its output and
+its failure go to the run's log. The setting is a directory, not an environment
+variable, because the tick and the runs start from the service manager, which
+never reads a shell profile.
+
+Nothing about notification is built in. `install.sh` copies `notify/desktop`
+(notify-send, or Omarchy's sender where it exists; osascript on macOS) into the
+directory on a first install and never touches it again, so one emptied on
+purpose stays empty; `show` says when a job would notify and nobody is wired to
+hear it. `notify/examples/` has ntfy and a webhook.
+
+A run has exactly one ending. On Linux a stop (`RuntimeMaxSec`, `rm`) signals
+`exec` and the command together, so the signal handler and the command's exit
+race to record it; a lock lets the first one write it down and notify, and a
+command that died of SIGTERM in a stopped unit counts as `killed` either way.
 
 ## Reading what happened
 
@@ -210,8 +228,8 @@ units do on Linux:
 - **The shell** is the user's login shell as Directory Services records it
   (`dscl`): a LaunchAgent's environment has no `SHELL`, and on macOS the shell
   is usually zsh, whose profile is where Homebrew lands on PATH.
-- **Notifications** go to Notification Center through `osascript`; critical
-  ones play a sound.
+- **Notifications** are the same hooks; the default `desktop` hook posts to
+  Notification Center through `osascript`, and critical ones play a sound.
 
 ## Changing a job
 
@@ -244,6 +262,7 @@ from finishing: a disabled job is kept until someone removes it.
 - `cmd/crontinental/`: the whole thing, in Go; one static binary
 - `systemd/crontinental.{timer,service}`: the tick
 - `completions/crontinental.bash`: tab completion for verbs and job names
+- `notify/`: the default desktop hook, and `examples/` for other places
 - `install.sh`: links the three into `~/.local/bin`, `~/.config/systemd/user`
   and bash-completion's user directory, then starts the timer
 - `tests/`: the suite (`python3 -m unittest discover tests`), black-box over the CLI

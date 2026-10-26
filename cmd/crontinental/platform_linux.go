@@ -7,7 +7,6 @@ package main
 // systemd refusing a second unit of the same name is the overlap guard.
 
 import (
-	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -19,7 +18,6 @@ import (
 
 const (
 	unitPrefix = "crontinental-job-"
-	glyph      = "󰃰"
 
 	// selfManaged: does exec itself enforce the timeout and stop the command?
 	// Here systemd does both (RuntimeMaxSec, and the cgroup kill on stop).
@@ -60,10 +58,12 @@ func dispatch(db *sql.DB, j *Job, dueAt time.Time, late int64) {
 		// is kept but never shows under -u. The identifier cannot lose that race.
 		"--property=SyslogIdentifier=" + logIdent(j.Name)}
 	// systemd-run starts the unit from the user manager's environment, not this
-	// process's, so a CRONTINENTAL_DB override has to be handed over explicitly
+	// process's, so the test overrides (the ledger, the hooks) are handed over
 	// -- otherwise a test tick dispatches jobs that record into the real ledger.
-	if v, ok := os.LookupEnv("CRONTINENTAL_DB"); ok {
-		args = append(args, "--setenv=CRONTINENTAL_DB="+v)
+	for _, k := range []string{"CRONTINENTAL_DB", "CRONTINENTAL_NOTIFY_DIR"} {
+		if v, ok := os.LookupEnv(k); ok {
+			args = append(args, "--setenv="+k+"="+v)
+		}
 	}
 	// The unit runs `exec`, not the command itself: something has to outlive
 	// the command to write down what it did, and this is the only process
@@ -87,7 +87,7 @@ func dispatch(db *sql.DB, j *Job, dueAt time.Time, late int64) {
 	}
 	record(db, j, dueAt, late, outcome, truncate(msg, 500), unit)
 	if !overlap && j.Notify != "never" {
-		notify("Scheduled job could not start", j.Name+": "+truncate(msg, 160), true)
+		notify(j, "unstartable", "Scheduled job could not start", j.Name+": "+truncate(msg, 160), true, nil, nil)
 	}
 }
 
@@ -107,27 +107,6 @@ func showLog(name string, lines int, follow bool) {
 	cmd := exec.Command("journalctl", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	_ = cmd.Run()
-}
-
-func notify(headline, body string, critical bool) {
-	urgency := "low"
-	if critical {
-		urgency = "critical"
-	}
-	// Omarchy's own sender where it exists: it carries the glyph and, unlike a
-	// bare notify-send there, survives the desktop's notification changes.
-	// Everywhere else the freedesktop standard.
-	var argv []string
-	if p, err := exec.LookPath("omarchy-notification-send"); err == nil {
-		argv = []string{p, "-g", glyph, "-u", urgency, headline, body}
-	} else if p, err := exec.LookPath("notify-send"); err == nil {
-		argv = []string{p, "-a", "crontinental", "-u", urgency, headline, body}
-	} else {
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	_ = exec.CommandContext(ctx, argv[0], argv[1:]...).Run() // a missing notifier must never fail a job
 }
 
 func runTool(name string, args ...string) (stdout, stderr []byte, err error) {

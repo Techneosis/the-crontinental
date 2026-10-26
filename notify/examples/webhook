@@ -1,0 +1,18 @@
+#!/bin/sh
+# Crontinental notify hook: POST the event, as JSON, to a URL.
+#
+#   cp notify/examples/webhook ~/.config/crontinental/notify.d/webhook
+#
+# then set URL below. The body is the event exactly as Crontinental hands it
+# over on stdin:
+#
+#   {"event":"fail","job":"backup","status":3,"elapsed":41,"urgency":"critical",
+#    "headline":"Scheduled job failed","body":"backup exited 3 after 41s — ...",
+#    "log":"crontinental log backup","host":"laptop"}
+#
+# status and elapsed are left out when there are none; note when the job has none.
+
+URL=https://example.com/hooks/crontinental
+
+exec curl -fsS -o /dev/null -X POST -H 'Content-Type: application/json' \
+  --data-binary @- "$URL"

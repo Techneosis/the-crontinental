@@ -154,7 +154,7 @@ func startFailed(db *sql.DB, j *Job, dueAt time.Time, late int64, err error) {
 	msg := err.Error()
 	record(db, j, dueAt, late, "error", truncate(msg, 500), logPath(j.Name))
 	if j.Notify != "never" {
-		notify("Scheduled job could not start", j.Name+": "+truncate(msg, 160), true)
+		notify(j, "unstartable", "Scheduled job could not start", j.Name+": "+truncate(msg, 160), true, nil, nil)
 	}
 }
 
@@ -249,24 +249,5 @@ func showLog(name string, lines int, follow bool) {
 		n, _ := io.Copy(os.Stdout, f)
 		f.Close()
 		off += n
-	}
-}
-
-// notify posts a Notification Center notice through osascript; a critical
-// one also plays a sound. The text goes in as arguments, never spliced into
-// the script, so no quoting can break it.
-func notify(headline, body string, critical bool) {
-	script := []string{"-e", "on run argv",
-		"-e", "display notification (item 2 of argv) with title (item 1 of argv)" + map[bool]string{true: ` sound name "Basso"`, false: ""}[critical],
-		"-e", "end run", headline, body}
-	cmd := exec.Command("/usr/bin/osascript", script...)
-	done := make(chan struct{})
-	go func() { _ = cmd.Run(); close(done) }() // a missing notifier must never fail a job
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
 	}
 }

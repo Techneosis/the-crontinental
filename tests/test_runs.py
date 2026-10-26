@@ -36,7 +36,9 @@ class Runs(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = os.path.join(self.tmp.name, "ledger.db")
-        self.env = {**os.environ, "CRONTINENTAL_DB": self.db}
+        os.mkdir(os.path.join(self.tmp.name, "notify.d"))  # empty: never the real hooks
+        self.env = {**os.environ, "CRONTINENTAL_DB": self.db,
+                    "CRONTINENTAL_NOTIFY_DIR": os.path.join(self.tmp.name, "notify.d")}
         # unit names are machine-wide on Linux: never collide with real jobs
         self.prefix = "t" + uuid.uuid4().hex[:8] + "-"
         self.names = []
@@ -139,6 +141,22 @@ class Runs(unittest.TestCase):
         self.cli("run", name)
         outcome, status, _ = self.wait_for(name, timeout=30)[0]
         self.assertEqual((outcome, status), ("killed", 143))
+
+    def test_a_killed_run_tells_the_hooks(self):
+        hooks = self.env["CRONTINENTAL_NOTIFY_DIR"]
+        told = os.path.join(self.tmp.name, "told")
+        hook = os.path.join(hooks, "rec")
+        with open(hook, "w") as f:
+            f.write(f'#!/bin/sh\necho "$CRONTINENTAL_EVENT $CRONTINENTAL_STATUS" > "{told}"\n')
+        os.chmod(hook, 0o755)
+        name = self.book("killhook", "sleep 30", "--forever", "--timeout", "2s", "--notify", "fail")
+        self.cli("run", name)
+        self.wait_for(name, timeout=30)
+        deadline = time.time() + 10
+        while not os.path.exists(told) and time.time() < deadline:
+            time.sleep(0.2)
+        with open(told) as f:
+            self.assertEqual(f.read().strip(), "killed 143")
 
     def test_a_second_run_while_one_is_going_is_an_overlap(self):
         name = self.book("long", "sleep 20", "--forever")

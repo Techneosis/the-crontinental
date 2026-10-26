@@ -8,10 +8,12 @@ reap jobs rather than dispatching them. So the suite runs anywhere Python, Go an
     python3 -m unittest discover tests
 """
 
+import json
 import os
 import sqlite3
 import subprocess
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -45,7 +47,12 @@ class Ledger(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.db = os.path.join(self.tmp.name, "ledger.db")
-        self.env = {**os.environ, "CRONTINENTAL_DB": self.db}
+        # an empty hook directory of its own, so a failing test job never runs
+        # the machine's real notify hooks
+        self.hooks = Path(self.tmp.name) / "notify.d"
+        self.hooks.mkdir()
+        self.env = {**os.environ, "CRONTINENTAL_DB": self.db,
+                    "CRONTINENTAL_NOTIFY_DIR": str(self.hooks)}
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -270,6 +277,93 @@ class Edit(Ledger):
         self.cli("every", "1h", "--name", "w", "--forever", "--", "true")
         self.assertIn("nothing to change", self.cli("edit", "w", ok=False).stderr)
         self.assertIn("no such job", self.cli("edit", "nope", "--forever", ok=False).stderr)
+
+
+class Notify(Ledger):
+    """Hooks: --notify says when, the executables in the notify dir say where."""
+
+    def hook(self, name, body):
+        p = self.hooks / name
+        p.write_text("#!/bin/sh\n" + body)
+        p.chmod(0o755)
+        return p
+
+    def recorder(self, name="rec"):
+        # writes what it was told, env and stdin, one file per call
+        out = Path(self.tmp.name) / f"{name}.calls"
+        out.mkdir()
+        self.hook(name, f'f="{out}/$$"; env | grep ^CRONTINENTAL_ > "$f.env"; cat > "$f.json"\n')
+        return out
+
+    def calls(self, out):
+        result = []
+        for envf in sorted(out.glob("*.env")):
+            env = dict(l.split("=", 1) for l in envf.read_text().splitlines())
+            result.append((env, json.loads(envf.with_suffix(".json").read_text())))
+        return result
+
+    def run_job(self, command, *flags):
+        self.cli("every", "1h", "--name", "j", "--forever", *flags, "--", command)
+        return subprocess.run([BIN, "exec", "j"], env=self.env, capture_output=True, text=True)
+
+    def test_a_failure_tells_every_hook_in_env_and_json(self):
+        a, b = self.recorder("a"), self.recorder("b")
+        self.run_job("exit 3", "--note", "nightly sync")
+        for out in (a, b):
+            [(env, ev)] = self.calls(out)
+            self.assertEqual(env["CRONTINENTAL_EVENT"], "fail")
+            self.assertEqual(env["CRONTINENTAL_JOB"], "j")
+            self.assertEqual(env["CRONTINENTAL_STATUS"], "3")
+            self.assertEqual(env["CRONTINENTAL_URGENCY"], "critical")
+            self.assertEqual(env["CRONTINENTAL_LOG"], "crontinental log j")
+            self.assertEqual((ev["event"], ev["job"], ev["status"], ev["note"]),
+                             ("fail", "j", 3, "nightly sync"))
+            self.assertIn("elapsed", ev)
+
+    def test_when_is_the_jobs_notify(self):
+        out = self.recorder()
+        self.run_job("true")                                   # fail: quiet on success
+        self.assertEqual(self.calls(out), [])
+        self.cli("rm", "j")
+        self.run_job("exit 1", "--notify", "never")
+        self.assertEqual(self.calls(out), [])
+        self.cli("rm", "j")
+        self.run_job("true", "--notify", "always")
+        [(env, ev)] = self.calls(out)
+        self.assertEqual((ev["event"], ev["status"], ev["urgency"]), ("ok", 0, "low"))
+
+    def test_done_is_its_own_event(self):
+        out = self.recorder()
+        self.run_job("exit 99", "--notify", "always")
+        [(env, ev)] = self.calls(out)
+        self.assertEqual((ev["event"], ev["status"]), ("done", 99))
+
+    def test_a_broken_hook_changes_nothing_and_the_others_still_run(self):
+        self.hook("a-broken", "echo hook-said-this; exit 7\n")
+        (self.hooks / "b-not-executable").write_text("#!/bin/sh\nexit 1\n")
+        (self.hooks / ".hidden").write_text("")
+        out = self.recorder("c")
+        p = self.run_job("exit 3")
+        self.assertEqual(p.returncode, 3, "the run's exit is the job's, not a hook's")
+        self.assertEqual(len(self.calls(out)), 1)
+        # what a hook says, and how it failed, lands in the run's own output
+        self.assertIn("hook-said-this", p.stderr)
+        self.assertIn("notify hook a-broken", p.stderr)
+        self.assertEqual(self.sql("SELECT outcome, status FROM run"), [("fail", 3)])
+
+    def test_a_hung_hook_is_given_up_on(self):
+        self.hook("slow", "sleep 60\n")
+        start = time.time()
+        p = self.run_job("exit 3")
+        self.assertLess(time.time() - start, 20)
+        self.assertIn("gave up", p.stderr)
+        self.assertEqual(self.sql("SELECT outcome FROM run"), [("fail",)])
+
+    def test_show_says_where_notifications_go(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--", "true")
+        self.assertIn("nobody is told", self.cli("show", "j").stdout)
+        self.recorder("phone")
+        self.assertIn("fail → phone", self.cli("show", "j").stdout)
 
 
 class Migration(Ledger):

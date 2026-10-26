@@ -10,10 +10,11 @@ Claude Code setup.
 | path | what |
 |---|---|
 | `cmd/crontinental/` | the whole tool, in Go: one static binary (`CGO_ENABLED=0`) |
-| `cmd/crontinental/platform_{linux,darwin}.go` | everything that differs: how a run starts, stops, logs and notifies |
+| `cmd/crontinental/platform_{linux,darwin}.go` | everything that differs: how a run starts, stops and logs |
 | `systemd/` | the tick on Linux (`crontinental.{timer,service}`) |
 | `launchd/` | the tick on macOS (a LaunchAgent; `install.sh` fills in its paths) |
 | `completions/` | bash completion |
+| `notify/` | notify hooks: `desktop` (the one `install.sh` seeds) and `examples/` |
 | `agents/` | what ships to users' Claude Code: the skill, and the CLAUDE.md snippet |
 | `install.sh` | one script, three modes: piped/downloaded fetches a release, a checkout builds, an unpacked release installs its binary; `--claude-only` touches only Claude Code |
 | `scripts/package.sh` | builds and packages every release target, plus `SHA256SUMS` |
