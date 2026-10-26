@@ -30,6 +30,8 @@ crontinental at "tomorrow 07:00" --name thaw -- ./scripts/thaw-staging
 crontinental every "Mon..Fri 02:00" --name backup --forever -- restic backup ~/work
 crontinental every 30m --name health --until "tomorrow 18:00" -- 'curl -sf https://example.com/healthz'
 crontinental every 10m --name deploy-wait --until-done --until "4 hours" -- 'deploy-is-live && exit 99'
+crontinental in 0 --name rebuild -- make release           # now, detached, logged like any job
+crontinental every 30m --now --name sync --forever -- ./sync   # once now, then every 30m
 
 crontinental list            what is scheduled, next run, last outcome
 crontinental show <name>     one job in full, with its last 10 runs
@@ -39,6 +41,10 @@ crontinental edit <name> …   change it in place: --until, --until-done, --fore
                              --every, --timeout, --notify, or a new command after --
 crontinental rm <name>       remove it
 ```
+
+**Starting now.** `in 0` (or `at now`) runs a one-off straight away instead of
+on the next tick. On `every`, `--now` adds one run straight away without moving
+the schedule. Without it, an interval repeat's first run is one interval out.
 
 **Always pass `--name`.** It is how the job is found later, and it becomes the
 name of its runs and its log (lowercase letters, digits, `-`, `_`).

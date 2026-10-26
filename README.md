@@ -150,11 +150,18 @@ argv, quoted properly.
 time the way a guest would say it: `"next friday 18:00"`, `"tomorrow 7am"`,
 `"2026-11-02 09:00"`, `"Oct 24 10:00"`, `"3 days"`.
 
+**Walk-ins.** `in 0` (or `at now`) seats the guest at once, straight from the
+desk, without waiting for the Concierge's next round. The booking is checked
+out as it is made, so the Concierge never seats them twice.
+
 **Standing reservations.** `every` takes systemd's calendar grammar, the same
 one every systemd timer uses (`03:00`, `Mon..Fri 07:30`, `*-*-01 09:00`,
 `hourly`), or a plain interval (`30m`, `4h`). The house reads it with its own
 clerk, so it means the same thing in every building, and the clerk is held to
-systemd's answers on a hundred thousand bookings.
+systemd's answers on a hundred thousand bookings. A standing guest booked
+with `--now` is also shown up straight away, and their first reservation stays
+where the schedule put it: `every 30m --now` runs now, then half an hour from
+now.
 
 **Asking the desk.** `crontinental check "<spec>"` says how the house reads a
 spec, and when it would next come round:
@@ -192,6 +199,7 @@ crontinental edit deploy-wait --until "tomorrow 18:00"   # extend the stay
 crontinental edit health --until-done                    # leave when the business is done
 crontinental edit backup --every "Mon..Fri 03:00"        # a new standing time
 crontinental edit backup -- restic backup ~/work ~/notes # new business, same room
+crontinental edit thaw --in 0                            # a wake-up call, brought forward to now
 ```
 
 Checkout terms compose as a guest would mean them: naming a checkout

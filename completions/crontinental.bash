@@ -31,7 +31,7 @@ _crontinental() {
     local IFS=$'\n'
     case $verb in
         in|at|every)
-            [[ $cur == -* ]] && COMPREPLY=($(compgen -W $'--name\n--workdir\n--timeout\n--catchup\n--until\n--until-done\n--forever\n--notify\n--note\n--by\n--' -- "$cur")) ;;
+            [[ $cur == -* ]] && COMPREPLY=($(compgen -W $'--name\n--workdir\n--timeout\n--catchup\n--until\n--until-done\n--forever\n--now\n--notify\n--note\n--by\n--' -- "$cur")) ;;
         list)  COMPREPLY=($(compgen -W $'--all\n--json' -- "$cur")) ;;
         prune) COMPREPLY=($(compgen -W '--days' -- "$cur")) ;;
         log)

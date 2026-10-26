@@ -38,6 +38,10 @@ func cmdAdd(o *opts, kind string) {
 		spec           *string
 		defaultCatchup string
 	)
+	if o.now && kind != "repeat" {
+		die("--now is for repeats; a one-off that should run now is `in 0` (or `at now`)")
+	}
+	booked := now() // "in 0" and "at now" land exactly here, so they count as now, not past
 	if kind == "once" {
 		if o.verb == "at" {
 			when = parseWhen(o.when)
@@ -48,7 +52,7 @@ func cmdAdd(o *opts, kind string) {
 			}
 			when = now().Add(time.Duration(secs) * time.Second)
 		}
-		if !when.After(now()) {
+		if when.Before(booked) {
 			die("that time is in the past: %s", when.Local().Format("2006-01-02 15:04"))
 		}
 		defaultCatchup = "run"
@@ -114,14 +118,36 @@ func cmdAdd(o *opts, kind string) {
 		by = provenance()
 	}
 
+	// A one-off due now is booked already fired: no next_run for the tick to find,
+	// so the run below is its only one. (Same order as the tick: advance, then
+	// dispatch.)
+	dueNow := kind == "once" && !when.After(now())
+	nextRun, enabled, finished := any(iso(when)), 1, any(nil)
+	if dueNow {
+		nextRun, enabled, finished = nil, 0, iso(now())
+	}
 	mustExec(db, `INSERT INTO job (name, command, workdir, kind, spec, interval_sec, next_run,
-		catchup, until, until_done, forever, timeout_sec, notify, note, created_at, created_by)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		name, command, workdir, kind, spec, interval, iso(when),
+		catchup, until, until_done, forever, timeout_sec, notify, note, created_at, created_by,
+		enabled, finished_at)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		name, command, workdir, kind, spec, interval, nextRun,
 		catchup, isoOrNil(until), b2i(o.untilDone), b2i(o.forever), timeout,
-		o.notify, nullIfEmpty(o.note), iso(now()), by)
+		o.notify, nullIfEmpty(o.note), iso(now()), by, enabled, finished)
 
+	if dueNow || o.now {
+		// --now is `run` straight after booking: off-schedule, so the first
+		// scheduled run stays where the spec put it.
+		dispatch(db, getJob(db, name), now(), 0)
+	}
+	if dueNow {
+		fmt.Printf("%s: started now — crontinental log %s\n", name, name)
+		fmt.Printf("  command: %s\n", command)
+		return
+	}
 	fmt.Printf("%s: next run %s\n", name, humanize(&when))
+	if o.now {
+		fmt.Printf("  started now — crontinental log %s\n", name)
+	}
 	if kind == "repeat" {
 		if interval != nil {
 			fmt.Printf("  repeating: every %s\n", *spec)

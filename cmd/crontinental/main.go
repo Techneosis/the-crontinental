@@ -43,7 +43,7 @@ type opts struct {
 	command []string
 
 	workdir, timeout, catchup, until, notify, note, by string
-	untilDone, forever                                 bool
+	untilDone, forever, now                            bool
 
 	// edit
 	every, at, in        string
@@ -70,8 +70,8 @@ Run a command later, once or on a repeat, without creating a systemd unit for it
   crontinental every 30m --name watch --until "2 hours" -- 'curl -sf https://x/health || exit 1'
 
 verbs:
-  in <delay>          run once, after a delay (90m, 2h, 1d)
-  at <time>           run once, at a time ("2026-09-15 09:00", "tomorrow 07:00")
+  in <delay>          run once, after a delay (90m, 2h, 1d; 0 is now)
+  at <time>           run once, at a time ("2026-09-15 09:00", "tomorrow 07:00", "now")
   every <spec>        repeat: a calendar spec ("Mon..Fri 07:30", "hourly") or an interval ("30m")
   list [--all] [--json]   what is scheduled
   show <name>         one job, in full, with its recent runs
@@ -95,11 +95,12 @@ options for in/at/every:
   --until TIME        a repeat ends at this time ("tomorrow 18:00", "3 days")
   --until-done        a repeat ends when the command exits 99
   --forever           a repeat that never ends; required when no end is given
+  --now               a repeat also runs once right away, then keeps its schedule
   --notify never|fail|always   (default: fail)
   --note TEXT         why this exists
   --by WHO            who scheduled it (default: the Claude session, or $USER)
 
-edit <name> takes any of the options above except --name and --by, plus:
+edit <name> takes any of the options above except --name, --by and --now, plus:
   --every SPEC        a repeat's new schedule
   --at TIME, --in SPAN   a one-off's new time
   --no-until, --no-until-done   drop that end (a repeat must keep one)
@@ -136,6 +137,7 @@ var addFlags = map[string]flagSpec{
 	"--until-done": {false, nil}, "--forever": {false, nil},
 	"--notify": {true, []string{"never", "fail", "always"}},
 	"--note":   {true, nil}, "--by": {true, nil},
+	"--now": {false, nil},
 }
 
 var verbFlags = map[string]map[string]flagSpec{
@@ -157,7 +159,7 @@ var editFlags = func() map[string]flagSpec {
 		"--no-until": {false, nil}, "--no-until-done": {false, nil},
 	}
 	for k, v := range addFlags {
-		if k != "--name" && k != "--by" {
+		if k != "--name" && k != "--by" && k != "--now" {
 			m[k] = v
 		}
 	}
@@ -274,7 +276,7 @@ func parse(argv []string) *opts {
 	_, o.noteSet = set["--note"]
 	o.every, o.at, o.in = set["--every"], set["--at"], set["--in"]
 	o.noUntil, o.noUntilDone = bools["--no-until"], bools["--no-until-done"]
-	o.untilDone, o.forever = bools["--until-done"], bools["--forever"]
+	o.untilDone, o.forever, o.now = bools["--until-done"], bools["--forever"], bools["--now"]
 	o.all, o.json, o.follow = bools["--all"], bools["--json"], bools["--follow"]
 	o.enabled, o.disabled = bools["--enabled"], bools["--disabled"]
 	if o.enabled && o.disabled {

@@ -63,6 +63,15 @@ time) and when it would fire next.
 `in` takes a systemd time span (`90m`, `2h 30min`, `1.5h`, `1d`; case matters,
 `M` is a month and `m` a minute).
 
+**Now** is a time like any other: `in 0` and `at now` are accepted (anything
+earlier than the moment of booking is refused). A one-off due now does not
+wait up to a minute for the tick: it is written to the ledger already finished
+(no `next_run`, the same state the tick's advance leaves it in) and dispatched
+on the spot, so the tick has nothing to fire a second time. `edit --in 0` on a
+waiting one-off does the same. `every … --now` is booking plus `run`: one
+off-schedule run straight away, with the first scheduled run left where the
+spec put it.
+
 `at` and `--until` take a time as a person types it: `2026-09-15 09:00`,
 `2026-09-15T09:00`, `9/15/2026`, `Oct 24 2026 10:00`, `24 Oct`, `07:00`,
 `7:30pm`, `7 pm`, `today`, `tomorrow 07:00`, `friday 18:00`, `next friday`,
@@ -207,8 +216,8 @@ units do on Linux:
 ## Changing a job
 
 `edit <name>` changes a job in place, so its run history and `created_by`
-survive. It takes the booking options (not `--name`, which is the unit name, or
-`--by`), plus `--every` for a repeat's schedule, `--at`/`--in` for a one-off's
+survive. It takes the booking options (not `--name`, which is the unit name,
+`--by`, or `--now`, which is what `run` is for), plus `--every` for a repeat's schedule, `--at`/`--in` for a one-off's
 time, `--no-until`/`--no-until-done`, and a new command after `--`.
 
 Ends compose: naming an end drops `--forever`, `--forever` drops both ends, and

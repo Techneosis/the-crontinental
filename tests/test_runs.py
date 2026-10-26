@@ -17,6 +17,7 @@ import tempfile
 import time
 import unittest
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from _binary import BIN
 
@@ -91,6 +92,47 @@ class Runs(unittest.TestCase):
         while "instant-line" not in self.cli("log", done, "-n", "20") and time.time() < deadline:
             time.sleep(0.2)
         self.assertIn("instant-line", self.cli("log", done, "-n", "20"))
+
+    def name(self, short):
+        name = self.prefix + short
+        self.names.append(name)
+        return name
+
+    def job(self, name):
+        with sqlite3.connect(self.db) as c:
+            return c.execute("SELECT next_run, finished_at FROM job WHERE name=?",
+                             (name,)).fetchone()
+
+    def test_a_one_off_due_now_runs_at_once_and_only_once(self):
+        for verb, when in (("in", "0"), ("at", "now")):
+            with self.subTest(verb=verb):
+                name = self.name(verb)
+                out = self.cli(verb, when, "--name", name, "--notify", "never", "--", "true")
+                self.assertIn("started now", out)
+                self.assertEqual(self.wait_for(name)[0][:2], ("ok", 0))
+                next_run, finished = self.job(name)
+                self.assertIsNone(next_run)
+                self.assertIsNotNone(finished)
+                # booked already fired: the tick finds nothing left to run
+                self.cli("tick")
+                time.sleep(1)
+                self.assertEqual(len(self.runs(name)), 1)
+
+    def test_a_repeat_with_now_runs_at_once_and_keeps_its_schedule(self):
+        name = self.book("now", "true", "--forever", "--now")
+        self.assertEqual(self.wait_for(name)[0][:2], ("ok", 0))
+        next_run, finished = self.job(name)
+        self.assertIsNone(finished)
+        # the first scheduled run is still an hour out, not moved by the extra one
+        due = datetime.fromisoformat(next_run.replace("Z", "+00:00"))
+        self.assertGreater(due - datetime.now(timezone.utc), timedelta(minutes=55))
+
+    def test_editing_a_one_off_to_now_runs_it(self):
+        name = self.name("edit")
+        self.cli("in", "1h", "--name", name, "--notify", "never", "--", "true")
+        self.assertIn("started now", self.cli("edit", name, "--in", "0"))
+        self.assertEqual(self.wait_for(name)[0][:2], ("ok", 0))
+        self.assertIsNotNone(self.job(name)[1])
 
     def test_timeout_kills_the_whole_command(self):
         name = self.book("kill", "sleep 30 & sleep 30; wait", "--forever", "--timeout", "2s")

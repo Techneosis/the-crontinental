@@ -86,6 +86,21 @@ class Booking(Ledger):
                      "--", "true", ok=False)
         self.assertIn("in the past", p.stderr)
 
+    def test_a_one_off_in_the_past_is_still_refused(self):
+        # "now" is allowed; anything before the moment of booking is not
+        p = self.cli("at", "1 hour ago", "--name", "x", "--", "true", ok=False)
+        self.assertIn("in the past", p.stderr)
+
+    def test_now_is_only_for_repeats(self):
+        p = self.cli("in", "2h", "--now", "--name", "x", "--", "true", ok=False)
+        self.assertIn("in 0", p.stderr)
+        self.assertIsNone(self.job("x"))
+
+    def test_edit_takes_no_now(self):
+        self.cli("every", "30m", "--name", "x", "--forever", "--", "true")
+        p = self.cli("edit", "x", "--now", ok=False)
+        self.assertEqual(p.returncode, 2)
+
     def test_each_end_is_accepted_and_recorded(self):
         self.cli("every", "30m", "--name", "a", "--until", "2 hours", "--", "true")
         self.cli("every", "30m", "--name", "b", "--until-done", "--", "true")

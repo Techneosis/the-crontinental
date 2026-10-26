@@ -19,6 +19,7 @@ func cmdEdit(o *opts) {
 	db := connect()
 	j := getJob(db, o.name)
 	var changed []string
+	fireNow := false
 	sets := map[string]any{}
 	set := func(col string, v any, what string) {
 		sets[col] = v
@@ -43,6 +44,7 @@ func cmdEdit(o *opts) {
 		set("next_run", iso(next), "")
 		j.Spec.String, j.Spec.Valid = o.every, true
 	case o.at != "" || o.in != "":
+		booked := now()
 		var when time.Time
 		if o.at != "" {
 			when = parseWhen(o.at)
@@ -53,10 +55,11 @@ func cmdEdit(o *opts) {
 			}
 			when = now().Add(time.Duration(secs) * time.Second)
 		}
-		if !when.After(now()) {
+		if when.Before(booked) {
 			die("that time is in the past: %s", when.Local().Format("2006-01-02 15:04"))
 		}
 		set("next_run", iso(when), "time")
+		fireNow = !when.After(now())
 	}
 
 	// --- how it ends
@@ -155,6 +158,15 @@ func cmdEdit(o *opts) {
 	mustExec(db, "UPDATE job SET "+strings.Join(cols, ", ")+" WHERE id=?", append(args, j.ID)...)
 
 	j = getJob(db, j.Name)
+	// A one-off moved to now runs now, the way `in 0` does when it is booked:
+	// finished first, so the tick has nothing left to fire. A disabled or
+	// already-finished one-off only gets its new time (enable decides).
+	started := false
+	if fireNow && j.Enabled != 0 && !j.FinishedAt.Valid {
+		finishJob(db, j.ID)
+		dispatch(db, j, now(), 0)
+		j, started = getJob(db, j.Name), true
+	}
 	var what []string
 	for _, c := range changed {
 		if c != "" {
@@ -162,6 +174,10 @@ func cmdEdit(o *opts) {
 		}
 	}
 	fmt.Printf("%s: changed %s\n", j.Name, strings.Join(what, ", "))
+	if started {
+		fmt.Printf("  started now — crontinental log %s\n", j.Name)
+		return
+	}
 	if j.NextRun.Valid {
 		fmt.Printf("  next run: %s\n", humanize(timePtr(j.NextRun.String)))
 	}
