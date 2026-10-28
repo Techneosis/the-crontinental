@@ -188,10 +188,24 @@ directory on a first install and never touches it again, so one emptied on
 purpose stays empty; `show` says when a job would notify and nobody is wired to
 hear it. `notify/examples/` has ntfy and a webhook.
 
+A job can carry words for its hooks: `--tag key=value`, repeatable, on any
+booking, changed with `edit --tag` and removed with `edit --no-tag key`. Every
+event about the job hands them to every hook, as `CRONTINENTAL_TAG_<KEY>` and as
+a `tags` object in the JSON (`{}` for none), so one hook can route by job
+without a hook per job or a table of job names. Crontinental gives them no
+meaning. A key is letters, digits and `_`, starting with a letter, and stored
+lowercase, because it becomes part of a variable's name; a value is anything
+but empty. They live in one `tags` column as a JSON object (schema v3), so a
+new tag is never a new column. A hook starts from its caller's environment with
+any inherited `CRONTINENTAL_TAG_*` removed, so it sees exactly this event's
+tags. An agent's edit that only changes tags, like `--note` and `--notify`, is
+not refused by the guard below.
+
 A job can also speak for itself: `crontinental notify [--urgent] [--title T]
 <text>` sends a `message` event to the same hooks. exec runs every command with
 `CRONTINENTAL_JOB` set, so a message from inside a run carries the job (its
-note, its log command); from anywhere else the job is empty. A message goes out
+note, its log command, its tags, with any `--tag` on the message laid over
+them); from anywhere else the job is empty. A message goes out
 whatever `--notify` says, since `--notify` governs only the end-of-run reports,
 and it never touches the run's outcome. No hooks is said on stderr but exits 0,
 so a script under `set -e` doesn't die of it.
@@ -268,7 +282,7 @@ edit to a finished job says so and leaves it finished.
 Inside a Claude Code session (`CLAUDE_CODE_SESSION_ID` set), `rm`, `disable` and
 `edit` refuse a job whose `created_by` isn't this session's `claude:<id>`, and
 name who booked it, unless `--force` is passed. An edit that touches only
-`--note` or `--notify` is let through; `enable` is never guarded, since it
+`--note`, `--notify` or tags is let through; `enable` is never guarded, since it
 can't lose anything. Outside a session nothing changes.
 
 It is keyed on *this session*, not on "booked by an agent", because a person's

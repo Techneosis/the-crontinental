@@ -2,13 +2,14 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 const schema = `
 CREATE TABLE IF NOT EXISTS job (
@@ -30,7 +31,8 @@ CREATE TABLE IF NOT EXISTS job (
   enabled      INTEGER NOT NULL DEFAULT 1,
   note         TEXT,
   created_at   TEXT NOT NULL,
-  created_by   TEXT
+  created_by   TEXT,
+  tags         TEXT                        -- JSON object of the job's --tag key=value pairs; NULL for none
 );
 CREATE INDEX IF NOT EXISTS job_due ON job(enabled, next_run);
 
@@ -56,7 +58,7 @@ CREATE INDEX IF NOT EXISTS run_job ON run(job_id, id DESC);
 // middle, so anything positional over SELECT * reads one of them wrong.
 const jobCols = `id, name, command, workdir, kind, spec, interval_sec, next_run, catchup,
   until, until_done, forever, finished_at, timeout_sec, notify, enabled, note,
-  created_at, created_by`
+  created_at, created_by, tags`
 
 type Job struct {
 	ID          int64
@@ -78,6 +80,7 @@ type Job struct {
 	Note        sql.NullString
 	CreatedAt   string
 	CreatedBy   sql.NullString
+	Tags        sql.NullString
 }
 
 type scanner interface{ Scan(...any) error }
@@ -86,7 +89,7 @@ func scanJob(s scanner) (*Job, error) {
 	var j Job
 	err := s.Scan(&j.ID, &j.Name, &j.Command, &j.Workdir, &j.Kind, &j.Spec, &j.IntervalSec,
 		&j.NextRun, &j.Catchup, &j.Until, &j.UntilDone, &j.Forever, &j.FinishedAt,
-		&j.TimeoutSec, &j.Notify, &j.Enabled, &j.Note, &j.CreatedAt, &j.CreatedBy)
+		&j.TimeoutSec, &j.Notify, &j.Enabled, &j.Note, &j.CreatedAt, &j.CreatedBy, &j.Tags)
 	return &j, err
 }
 
@@ -127,8 +130,11 @@ func connect() *sql.DB {
 	if version < 2 {
 		migrateV2(db)
 	}
+	if version < 3 {
+		migrateV3(db)
+	}
 	if version < schemaVersion {
-		mustExec(db, "PRAGMA user_version=2")
+		mustExec(db, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion))
 	}
 	return db
 }
@@ -139,6 +145,32 @@ func connect() *sql.DB {
 // finished starts its retention clock now instead of being deleted on the
 // first tick.
 func migrateV2(db *sql.DB) {
+	have := jobColumns(db)
+	for _, c := range [][2]string{
+		{"until_done", "INTEGER NOT NULL DEFAULT 0"},
+		{"forever", "INTEGER NOT NULL DEFAULT 0"},
+		{"finished_at", "TEXT"},
+	} {
+		if !have[c[0]] {
+			mustExec(db, "ALTER TABLE job ADD COLUMN "+c[0]+" "+c[1])
+		}
+	}
+	t := iso(now())
+	mustExec(db, "UPDATE job SET forever=1 WHERE kind='repeat' AND until IS NULL")
+	mustExec(db, "UPDATE job SET finished_at=? WHERE finished_at IS NULL AND enabled=0"+
+		" AND next_run IS NULL AND (kind='once' OR until<=?)", t, t)
+}
+
+// migrateV3 adds tags. Every existing job has none, which NULL already says.
+func migrateV3(db *sql.DB) {
+	if !jobColumns(db)["tags"] {
+		mustExec(db, "ALTER TABLE job ADD COLUMN tags TEXT")
+	}
+}
+
+// jobColumns: the job table's columns as the ledger has them, which the
+// CREATE TABLE IF NOT EXISTS above leaves alone for an older ledger.
+func jobColumns(db *sql.DB) map[string]bool {
 	have := map[string]bool{}
 	rows, err := db.Query("PRAGMA table_info(job)")
 	if err != nil {
@@ -154,19 +186,7 @@ func migrateV2(db *sql.DB) {
 		have[name] = true
 	}
 	rows.Close()
-	for _, c := range [][2]string{
-		{"until_done", "INTEGER NOT NULL DEFAULT 0"},
-		{"forever", "INTEGER NOT NULL DEFAULT 0"},
-		{"finished_at", "TEXT"},
-	} {
-		if !have[c[0]] {
-			mustExec(db, "ALTER TABLE job ADD COLUMN "+c[0]+" "+c[1])
-		}
-	}
-	t := iso(now())
-	mustExec(db, "UPDATE job SET forever=1 WHERE kind='repeat' AND until IS NULL")
-	mustExec(db, "UPDATE job SET finished_at=? WHERE finished_at IS NULL AND enabled=0"+
-		" AND next_run IS NULL AND (kind='once' OR until<=?)", t, t)
+	return have
 }
 
 func mustExec(db *sql.DB, q string, args ...any) sql.Result {

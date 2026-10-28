@@ -118,6 +118,7 @@ func cmdAdd(o *opts, kind string) {
 	if by == "" {
 		by = provenance()
 	}
+	tags := parseTags(o.tags)
 
 	// A one-off due now is booked already fired: no next_run for the tick to find,
 	// so the run below is its only one. (Same order as the tick: advance, then
@@ -129,11 +130,11 @@ func cmdAdd(o *opts, kind string) {
 	}
 	mustExec(db, `INSERT INTO job (name, command, workdir, kind, spec, interval_sec, next_run,
 		catchup, until, until_done, forever, timeout_sec, notify, note, created_at, created_by,
-		enabled, finished_at)
-		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		enabled, finished_at, tags)
+		VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		name, command, workdir, kind, spec, interval, nextRun,
 		catchup, isoOrNil(until), b2i(o.untilDone), b2i(o.forever), timeout,
-		o.notify, nullIfEmpty(o.note), iso(now()), by, enabled, finished)
+		o.notify, nullIfEmpty(o.note), iso(now()), by, enabled, finished, tagsValue(tags))
 
 	if dueNow || o.now {
 		// --now is `run` straight after booking: off-schedule, so the first

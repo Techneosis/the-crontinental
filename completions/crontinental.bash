@@ -25,16 +25,16 @@ _crontinental() {
         --catchup) COMPREPLY=($(compgen -W "run skip" -- "$cur")); return ;;
         --notify)  COMPREPLY=($(compgen -W "never fail always" -- "$cur")); return ;;
         --workdir) COMPREPLY=($(compgen -d -- "$cur")); return ;;
-        --name|--timeout|--until|--note|--by|--days|-n|--lines|--every|--at|--in) return ;;
+        --name|--timeout|--until|--note|--by|--days|-n|--lines|--every|--at|--in|--tag|--no-tag|--title) return ;;
     esac
 
     local IFS=$'\n'
     case $verb in
         in|at|every)
-            [[ $cur == -* ]] && COMPREPLY=($(compgen -W $'--name\n--workdir\n--timeout\n--catchup\n--until\n--until-done\n--forever\n--now\n--notify\n--note\n--by\n--' -- "$cur")) ;;
+            [[ $cur == -* ]] && COMPREPLY=($(compgen -W $'--name\n--workdir\n--timeout\n--catchup\n--until\n--until-done\n--forever\n--now\n--notify\n--note\n--by\n--tag\n--' -- "$cur")) ;;
         list)  COMPREPLY=($(compgen -W $'--all\n--json' -- "$cur")) ;;
         prune) COMPREPLY=($(compgen -W '--days' -- "$cur")) ;;
-        notify) COMPREPLY=($(compgen -W $'--urgent\n--title' -- "$cur")) ;;
+        notify) COMPREPLY=($(compgen -W $'--urgent\n--title\n--tag' -- "$cur")) ;;
         log)
             if [[ $cur == -* ]]; then
                 COMPREPLY=($(compgen -W $'--lines\n--follow' -- "$cur"))
@@ -43,7 +43,7 @@ _crontinental() {
             fi ;;
         edit)
             if [[ $cur == -* ]]; then
-                COMPREPLY=($(compgen -W $'--every\n--at\n--in\n--until\n--no-until\n--until-done\n--no-until-done\n--forever\n--workdir\n--timeout\n--catchup\n--notify\n--note\n--force\n--' -- "$cur"))
+                COMPREPLY=($(compgen -W $'--every\n--at\n--in\n--until\n--no-until\n--until-done\n--no-until-done\n--forever\n--workdir\n--timeout\n--catchup\n--notify\n--note\n--tag\n--no-tag\n--force\n--' -- "$cur"))
             elif ((COMP_CWORD == 2)); then
                 COMPREPLY=($(compgen -W "$(crontinental names 2>/dev/null)" -- "$cur"))
             fi ;;

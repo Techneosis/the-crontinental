@@ -131,6 +131,9 @@ func listJSON(db *sql.DB, q string) {
 				v = string(bs)
 			}
 			jv, _ := json.Marshal(v)
+			if c == "tags" { // stored as JSON: shown as the object, not a string of it
+				jv = rawTags(v)
+			}
 			b.Write(k)
 			b.WriteString(":")
 			b.Write(jv)
@@ -211,6 +214,9 @@ func cmdShow(o *opts) {
 	fmt.Printf("created     %s by %s\n", humanize(timePtr(j.CreatedAt)), j.CreatedBy.String)
 	if j.Note.Valid && j.Note.String != "" {
 		fmt.Printf("note        %s\n", j.Note.String)
+	}
+	if tags := jobTags(j); len(tags) > 0 {
+		fmt.Printf("tags        %s\n", describeTags(tags))
 	}
 	label, where := runnerInfo(j.Name)
 	fmt.Printf("%-11s %s\n", label, where)

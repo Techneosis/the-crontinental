@@ -277,6 +277,15 @@ class Edit(Ledger):
         self.assertEqual(self.row("w", "created_at", "created_by"), created)
         self.assertEqual(self.sql("SELECT count(*) FROM run"), [(1,)])
 
+    def test_tags_are_added_changed_and_removed(self):
+        self.cli("every", "1h", "--name", "w", "--forever", "--tag", "a=1", "--tag", "b=2", "--", "true")
+        self.cli("edit", "w", "--tag", "b=3", "--tag", "c=4", "--no-tag", "a")
+        self.assertEqual(json.loads(self.row("w", "tags")[0]), {"b": "3", "c": "4"})
+        self.cli("edit", "w", "--no-tag", "b", "--no-tag", "c")
+        self.assertEqual(self.row("w", "tags"), (None,))
+        p = self.cli("edit", "w", "--no-tag", "gone", ok=False)
+        self.assertIn("no tag", p.stderr)
+
     def test_edit_without_changes_or_job_is_refused(self):
         self.cli("every", "1h", "--name", "w", "--forever", "--", "true")
         self.assertIn("nothing to change", self.cli("edit", "w", ok=False).stderr)
@@ -335,10 +344,10 @@ class Guard(Ledger):
         self.cli("disable", "w")
         self.cli("rm", "w")
 
-    def test_a_note_or_notify_edit_is_let_through(self):
+    def test_a_note_notify_or_tag_edit_is_let_through(self):
         self.book_as_person("w")
         self.as_session("bbbbbbbb-2222")
-        self.cli("edit", "w", "--note", "nightly backup", "--notify", "always")
+        self.cli("edit", "w", "--note", "nightly backup", "--notify", "always", "--tag", "topic=ops")
         p = self.cli("edit", "w", "--note", "x", "--timeout", "5m", ok=False)
         self.assertIn("not going to edit", p.stderr)
 
@@ -469,6 +478,55 @@ class Notify(Ledger):
         self.assertNotEqual(self.cli("notify", " ", ok=False).returncode, 0)
         self.assertEqual(self.cli("notify", ok=False).returncode, 2)
 
+    def test_tags_reach_every_hook_in_env_and_json(self):
+        out = self.recorder()
+        self.run_job("exit 3", "--tag", "topic=ops", "--tag", "Priority=5")
+        [(env, ev)] = self.calls(out)
+        self.assertEqual((env["CRONTINENTAL_TAG_TOPIC"], env["CRONTINENTAL_TAG_PRIORITY"]),
+                         ("ops", "5"))
+        self.assertEqual(ev["tags"], {"topic": "ops", "priority": "5"})
+
+    def test_no_tags_is_an_empty_object_and_no_variables(self):
+        out = self.recorder()
+        self.cli("notify", "hello")
+        [(env, ev)] = self.calls(out)
+        self.assertEqual(ev["tags"], {})
+        self.assertFalse([k for k in env if k.startswith("CRONTINENTAL_TAG_")])
+
+    def test_a_message_carries_its_jobs_tags_and_can_add_its_own(self):
+        out = self.recorder()
+        p = self.run_job(f"{shlex.quote(BIN)} notify --tag topic=pager --tag extra=1 'hot'",
+                         "--notify", "never", "--tag", "topic=ops", "--tag", "team=infra")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        [(env, ev)] = self.calls(out)
+        self.assertEqual(ev["tags"], {"topic": "pager", "team": "infra", "extra": "1"})
+        self.assertEqual(env["CRONTINENTAL_TAG_TOPIC"], "pager")
+
+    def test_inherited_tag_variables_dont_leak_into_a_hook(self):
+        out = self.recorder()
+        self.env["CRONTINENTAL_TAG_STALE"] = "x"
+        self.cli("notify", "--tag", "fresh=y", "hello")
+        [(env, ev)] = self.calls(out)
+        self.assertNotIn("CRONTINENTAL_TAG_STALE", env)
+        self.assertEqual(env["CRONTINENTAL_TAG_FRESH"], "y")
+
+    def test_a_tag_needs_a_name_and_a_value(self):
+        for bad in ("topic", "topic=", "9lives=x", "a-b=x", "=x"):
+            p = self.cli("every", "1h", "--name", "j", "--forever", "--tag", bad, "--", "true", ok=False)
+            self.assertEqual(p.returncode, 1, bad)
+        self.assertIsNone(self.job("j"))
+        self.assertNotEqual(self.cli("notify", "--tag", "nope", "hi", ok=False).returncode, 0)
+
+    def test_show_and_list_json_carry_tags(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--tag", "topic=ops",
+                 "--tag", "url=https://x/?a=b", "--", "true")
+        self.cli("every", "1h", "--name", "k", "--forever", "--", "true")
+        self.assertIn("tags        topic=ops, url=https://x/?a=b", self.cli("show", "j").stdout)
+        self.assertNotIn("tags", self.cli("show", "k").stdout)
+        jobs = {j["name"]: j for j in json.loads(self.cli("list", "--json").stdout)}
+        self.assertEqual(jobs["j"]["tags"], {"topic": "ops", "url": "https://x/?a=b"})
+        self.assertEqual(jobs["k"]["tags"], {})
+
     def test_show_says_where_notifications_go(self):
         self.cli("every", "1h", "--name", "j", "--forever", "--", "true")
         self.assertIn("nobody is told", self.cli("show", "j").stdout)
@@ -489,12 +547,29 @@ class Migration(Ledger):
             c.execute("INSERT INTO job (name, command, kind, next_run, enabled, timeout_sec, created_at)"
                       " VALUES ('fired','true','once',NULL,0,3600,?)", (ago(days=10),))
         self.cli("list")
-        self.assertEqual(self.sql("PRAGMA user_version"), [(2,)])
+        self.assertEqual(self.sql("PRAGMA user_version"), [(3,)])
         self.assertEqual(self.job("legacy")[3], 1, "open-ended repeats become --forever")
         self.assertEqual(self.job("ending")[3], 0, "a repeat with --until keeps its end")
         self.assertIsNotNone(self.job("fired")[2], "finished one-offs start the retention clock")
         self.cli("tick")
         self.assertIsNotNone(self.job("fired"), "...rather than being reaped on the first tick")
+
+    def test_v2_ledger_gains_tags_and_keeps_its_jobs(self):
+        with sqlite3.connect(self.db) as c:
+            c.executescript(V1_SCHEMA)
+        self.cli("list")                       # v1 -> current, then wind back to v2
+        with sqlite3.connect(self.db) as c:
+            c.execute("ALTER TABLE job DROP COLUMN tags")
+            c.execute("PRAGMA user_version=2")
+            c.execute("INSERT INTO job (name, command, kind, spec, interval_sec, next_run,"
+                      " forever, timeout_sec, created_at) VALUES"
+                      " ('kept','true','repeat','1h',3600,?,1,3600,?)",
+                      (ago(minutes=-30), ago(days=10)))
+        self.assertIn("kept", self.cli("list").stdout)
+        self.assertEqual(self.sql("PRAGMA user_version"), [(3,)])
+        self.assertEqual(self.sql("SELECT tags FROM job WHERE name='kept'"), [(None,)])
+        self.cli("edit", "kept", "--tag", "topic=ops")
+        self.assertIn("topic=ops", self.cli("show", "kept").stdout)
 
 
 if __name__ == "__main__":

@@ -72,22 +72,28 @@ func hooks() []string {
 // event is what a hook is told. Status and Elapsed are absent when there is
 // none (a run that never started has no exit status).
 type event struct {
-	Event    string `json:"event"` // fail, killed, error, unstartable, done, ok, message
-	Job      string `json:"job"`   // empty for a message sent from outside any job
-	Status   *int   `json:"status,omitempty"`
-	Elapsed  *int   `json:"elapsed,omitempty"`
-	Urgency  string `json:"urgency"` // critical or low
-	Headline string `json:"headline"`
-	Body     string `json:"body"`
-	Log      string `json:"log,omitempty"` // the command that shows the job's output
-	Note     string `json:"note,omitempty"`
-	Host     string `json:"host"`
+	Event    string            `json:"event"` // fail, killed, error, unstartable, done, ok, message
+	Job      string            `json:"job"`   // empty for a message sent from outside any job
+	Status   *int              `json:"status,omitempty"`
+	Elapsed  *int              `json:"elapsed,omitempty"`
+	Urgency  string            `json:"urgency"` // critical or low
+	Headline string            `json:"headline"`
+	Body     string            `json:"body"`
+	Log      string            `json:"log,omitempty"` // the command that shows the job's output
+	Note     string            `json:"note,omitempty"`
+	Tags     map[string]string `json:"tags"` // the job's --tag pairs; {} for none
+	Host     string            `json:"host"`
 }
 
 // notify tells every hook about ev, and returns how many it told (once they
 // have all finished or been given up on). j may be nil: a message from outside
 // any job.
 func notify(j *Job, kind, headline, body string, critical bool, status, elapsed *int) int {
+	return notifyTagged(j, nil, kind, headline, body, critical, status, elapsed)
+}
+
+// notifyTagged is notify with extra tags laid over the job's, for one message.
+func notifyTagged(j *Job, extra map[string]string, kind, headline, body string, critical bool, status, elapsed *int) int {
 	hs := hooks()
 	if len(hs) == 0 {
 		return 0
@@ -106,14 +112,19 @@ func notify(j *Job, kind, headline, body string, critical bool, status, elapsed 
 	if j.Note.Valid {
 		ev.Note = j.Note.String
 	}
+	ev.Tags = jobTags(j)
+	for k, v := range extra {
+		ev.Tags[k] = v
+	}
 	ev.Host, _ = os.Hostname()
 
 	payload, _ := json.Marshal(ev)
-	env := append(os.Environ(),
+	env := append(hookEnviron(),
 		"CRONTINENTAL_EVENT="+ev.Event, "CRONTINENTAL_JOB="+ev.Job,
 		"CRONTINENTAL_URGENCY="+ev.Urgency, "CRONTINENTAL_HEADLINE="+ev.Headline,
 		"CRONTINENTAL_BODY="+ev.Body, "CRONTINENTAL_LOG="+ev.Log,
 		"CRONTINENTAL_NOTE="+ev.Note, "CRONTINENTAL_HOST="+ev.Host)
+	env = append(env, tagEnv(ev.Tags)...)
 	if status != nil {
 		env = append(env, "CRONTINENTAL_STATUS="+strconv.Itoa(*status))
 	}
@@ -142,6 +153,7 @@ func cmdNotify(o *opts) {
 	if strings.TrimSpace(o.text) == "" {
 		die("nothing to say")
 	}
+	extra := parseTags(o.tags)
 	var j *Job
 	if name := os.Getenv("CRONTINENTAL_JOB"); name != "" {
 		j = lookupJob(connect(), name)
@@ -156,7 +168,7 @@ func cmdNotify(o *opts) {
 			title = j.Name
 		}
 	}
-	if notify(j, "message", title, o.text, o.urgent, nil, nil) == 0 {
+	if notifyTagged(j, extra, "message", title, o.text, o.urgent, nil, nil) == 0 {
 		fmt.Fprintf(os.Stderr, "crontinental: nobody was told: no hooks in %s\n", notifyDir())
 	}
 }

@@ -44,6 +44,7 @@ type opts struct {
 
 	workdir, timeout, catchup, until, notify, note, by string
 	untilDone, forever, now, force                     bool
+	tags, noTags                                       []string // --tag, --no-tag: repeatable
 
 	// edit
 	every, at, in        string
@@ -87,8 +88,9 @@ verbs:
   edit <name> ...     change a job in place, keeping its history (see below)
   prune [--days N]    drop finished jobs now (the tick does it after 3 days)
   check <spec> [-n N] how a spec reads (calendar, interval or time) and when it fires
-  notify [--urgent] [--title T] <text>   tell the notify hooks something, now;
-                      inside a job it is sent as that job's (see below)
+  notify [--urgent] [--title T] [--tag K=V] <text>   tell the notify hooks
+                      something, now; inside a job it is sent as that job's,
+                      with its tags (a --tag here adds to them, for this message)
   path                print the ledger path
   version             which build this is
 
@@ -105,11 +107,14 @@ options for in/at/every:
   --notify never|fail|always   (default: fail)
   --note TEXT         why this exists
   --by WHO            who scheduled it (default: the Claude session, or $USER)
+  --tag KEY=VALUE     a word for the notify hooks, as CRONTINENTAL_TAG_<KEY>
+                      (repeatable; e.g. --tag topic=ops)
 
 edit <name> takes any of the options above except --name, --by and --now, plus:
   --every SPEC        a repeat's new schedule
   --at TIME, --in SPAN   a one-off's new time
   --no-until, --no-until-done   drop that end (a repeat must keep one)
+  --tag KEY=VALUE     add or change a tag;  --no-tag KEY   remove one
   -- COMMAND          a new command
 Naming an end drops --forever; --forever drops both ends.
 
@@ -151,7 +156,7 @@ var addFlags = map[string]flagSpec{
 	"--until-done": {false, nil}, "--forever": {false, nil},
 	"--notify": {true, []string{"never", "fail", "always"}},
 	"--note":   {true, nil}, "--by": {true, nil},
-	"--now": {false, nil},
+	"--now": {false, nil}, "--tag": {true, nil},
 }
 
 var verbFlags = map[string]map[string]flagSpec{
@@ -166,14 +171,14 @@ var verbFlags = map[string]map[string]flagSpec{
 	"check":  {"--count": {true, nil}, "--lines": {true, nil}},
 	"exec":   {"--due": {true, nil}, "--late": {true, nil}},
 	"names":  {"--enabled": {false, nil}, "--disabled": {false, nil}},
-	"notify": {"--urgent": {false, nil}, "--title": {true, nil}},
+	"notify": {"--urgent": {false, nil}, "--title": {true, nil}, "--tag": {true, nil}},
 }
 
 var editFlags = func() map[string]flagSpec {
 	m := map[string]flagSpec{
 		"--every": {true, nil}, "--at": {true, nil}, "--in": {true, nil},
 		"--no-until": {false, nil}, "--no-until-done": {false, nil},
-		"--force": {false, nil},
+		"--force": {false, nil}, "--no-tag": {true, nil},
 	}
 	for k, v := range addFlags {
 		if k != "--name" && k != "--by" && k != "--now" {
@@ -184,6 +189,9 @@ var editFlags = func() map[string]flagSpec {
 }()
 
 var shortFlags = map[string]string{"-n": "--lines", "-f": "--follow"}
+
+// repeatable flags collect every value given, rather than the last one
+var repeatable = map[string]bool{"--tag": true, "--no-tag": true}
 
 // positionals each verb needs, by name
 var verbArgs = map[string][]string{
@@ -226,6 +234,7 @@ func parse(argv []string) *opts {
 
 	var pos []string
 	set := map[string]string{}
+	lists := map[string][]string{}
 	bools := map[string]bool{}
 	rest := argv[1:]
 	for i := 0; i < len(rest); i++ {
@@ -264,6 +273,9 @@ func parse(argv []string) *opts {
 			usageErr(o.verb, "argument %s: invalid choice: %q (choose from %s)", key, val,
 				"'"+strings.Join(spec.choices, "', '")+"'")
 		}
+		if repeatable[key] {
+			lists[key] = append(lists[key], val)
+		}
 		set[key] = val
 	}
 
@@ -300,6 +312,7 @@ func parse(argv []string) *opts {
 	o.all, o.json, o.follow = bools["--all"], bools["--json"], bools["--follow"]
 	o.enabled, o.disabled = bools["--enabled"], bools["--disabled"]
 	o.force = bools["--force"]
+	o.tags, o.noTags = lists["--tag"], lists["--no-tag"]
 	o.urgent, o.title = bools["--urgent"], set["--title"]
 	if o.enabled && o.disabled {
 		usageErr(o.verb, "argument --disabled: not allowed with argument --enabled")

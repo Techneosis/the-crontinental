@@ -264,6 +264,19 @@ wants it whole, as JSON on stdin:
 | `CRONTINENTAL_URGENCY` | `critical` for trouble, `low` otherwise |
 | `CRONTINENTAL_HEADLINE`, `_BODY` | the message, ready to show |
 | `CRONTINENTAL_LOG`, `_NOTE`, `_HOST` | how to read the logbook, the booking's note, this machine |
+| `CRONTINENTAL_TAG_<KEY>` | one for each of the booking's tags (below) |
+
+**Instructions for the operator.** A booking can carry its own word for the
+switchboard: `--tag topic=ops`, as many as it likes, each a name and a value.
+The house never reads them. It passes them along with every call about that
+guest, as `CRONTINENTAL_TAG_TOPIC=ops` and as `"tags"` in the JSON, and what
+`topic` means is the extension's business: one guest's trouble rings the ops
+channel, another's only the desk.
+
+```
+crontinental every "Mon..Fri 02:00" --name backup --forever --tag ntfy_topic=ops -- restic backup ~/work
+crontinental edit backup --tag ntfy_topic=pager --no-tag team
+```
 
 So a phone is three lines of shell. `notify/examples/` has an
 [ntfy](https://ntfy.sh) extension and a webhook that posts the JSON as it
@@ -280,7 +293,8 @@ crontinental notify --title "Deploy" "v1.4.2 is live"
 ```
 
 Every stay knows its own room number (`CRONTINENTAL_JOB`), so the call goes
-through as that guest's, with their note and their logbook. It goes through
+through as that guest's, with their note, their logbook and their tags; a
+`--tag` on the call adds to those, for that call only. It goes through
 whatever `--notify` says, which governs only the reports at checkout:
 `--notify never` with a call of your own is a guest who is quiet about routine
 trouble and speaks up only when it matters. A call is a call, not a checkout,

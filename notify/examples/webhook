@@ -8,9 +8,10 @@
 #
 #   {"event":"fail","job":"backup","status":3,"elapsed":41,"urgency":"critical",
 #    "headline":"Scheduled job failed","body":"backup exited 3 after 41s — ...",
-#    "log":"crontinental log backup","host":"laptop"}
+#    "log":"crontinental log backup","tags":{"topic":"ops"},"host":"laptop"}
 #
-# status and elapsed are left out when there are none; note when the job has none.
+# status and elapsed are left out when there are none; note when the job has
+# none. tags is the job's --tag pairs, {} when it has none.
 
 URL=https://example.com/hooks/crontinental
 

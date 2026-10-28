@@ -38,7 +38,7 @@ crontinental show <name>     one job in full, with its last 10 runs
 crontinental log <name>      what it printed
 crontinental run <name>      fire it now, without moving its schedule
 crontinental edit <name> …   change it in place: --until, --until-done, --forever,
-                             --every, --timeout, --notify, or a new command after --
+                             --every, --timeout, --notify, --tag, or a new command after --
 crontinental rm <name>       remove it
 ```
 
@@ -131,6 +131,12 @@ minute; that is the tick.
   notification goes (desktop, phone, webhook) is the user's hooks in
   `~/.config/crontinental/notify.d/`, not a job setting; `show <name>` names
   them, or says nobody is told. Don't add or change hooks unless asked.
+- **Tags are words for those hooks.** `--tag key=value` (repeatable; `edit
+  --tag`, `edit --no-tag key`) reaches every hook as `CRONTINENTAL_TAG_<KEY>`,
+  e.g. so a hook can send one job to a different channel. Crontinental gives
+  tags no meaning; the user's hooks do. Use one when the user asks for routing
+  a hook supports (read the hook to see which tags it reads), and don't invent
+  tags nobody reads.
 - **A job can say something itself.** When the user wants to hear a result, not
   just a failure ("tell me what the backup found", "let me know when it's
   live"), put `crontinental notify "…"` in the command at that point. It goes to

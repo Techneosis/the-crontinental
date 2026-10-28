@@ -138,6 +138,20 @@ func cmdEdit(o *opts) {
 		}
 		set("workdir", w, "workdir")
 	}
+	if len(o.tags) > 0 || len(o.noTags) > 0 {
+		tags := jobTags(j)
+		for _, k := range o.noTags {
+			k = checkTagKey(k)
+			if _, ok := tags[k]; !ok {
+				die("%s has no tag %q", j.Name, k)
+			}
+			delete(tags, k)
+		}
+		for k, v := range parseTags(o.tags) {
+			tags[k] = v
+		}
+		set("tags", tagsValue(tags), "tags")
+	}
 	if len(o.command) > 0 {
 		c := joinCommand(o.command)
 		if c == "" {
@@ -150,7 +164,7 @@ func cmdEdit(o *opts) {
 		die("nothing to change (see crontinental --help for what edit takes)")
 	}
 	for c := range sets {
-		if c != "note" && c != "notify" { // saying why, or how loudly, is harmless
+		if c != "note" && c != "notify" && c != "tags" { // why, how loudly, and to whom: harmless
 			guardOthers(j, "edit", o.force)
 			break
 		}
