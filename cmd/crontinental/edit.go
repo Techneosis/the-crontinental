@@ -149,6 +149,12 @@ func cmdEdit(o *opts) {
 	if len(sets) == 0 {
 		die("nothing to change (see crontinental --help for what edit takes)")
 	}
+	for c := range sets {
+		if c != "note" && c != "notify" { // saying why, or how loudly, is harmless
+			guardOthers(j, "edit", o.force)
+			break
+		}
+	}
 	var cols []string
 	var args []any
 	for c, v := range sets {

@@ -43,7 +43,7 @@ type opts struct {
 	command []string
 
 	workdir, timeout, catchup, until, notify, note, by string
-	untilDone, forever, now                            bool
+	untilDone, forever, now, force                     bool
 
 	// edit
 	every, at, in        string
@@ -113,6 +113,10 @@ edit <name> takes any of the options above except --name, --by and --now, plus:
   -- COMMAND          a new command
 Naming an end drops --forever; --forever drops both ends.
 
+Inside a Claude Code session, rm, disable and edit refuse a job that session
+didn't book unless given --force (an edit of only --note/--notify is let
+through). It keeps a tidying agent off jobs it doesn't own; it is not a lock.
+
 A repeat must end: --until <time>, --until-done (the command exits
 99 when finished), or --forever. Finished jobs are deleted after 3 days.
 
@@ -153,10 +157,11 @@ var addFlags = map[string]flagSpec{
 var verbFlags = map[string]map[string]flagSpec{
 	"in": addFlags, "at": addFlags, "every": addFlags,
 	"list": {"--all": {false, nil}, "--json": {false, nil}},
-	"show": {}, "run": {}, "rm": {}, "enable": {}, "disable": {},
-	"log":   {"--lines": {true, nil}, "--follow": {false, nil}},
-	"prune": {"--days": {true, nil}},
-	"tick":  {}, "path": {},
+	"show": {}, "run": {}, "rm": {"--force": {false, nil}}, "enable": {},
+	"disable": {"--force": {false, nil}},
+	"log":     {"--lines": {true, nil}, "--follow": {false, nil}},
+	"prune":   {"--days": {true, nil}},
+	"tick":    {}, "path": {},
 	"edit":   editFlags,
 	"check":  {"--count": {true, nil}, "--lines": {true, nil}},
 	"exec":   {"--due": {true, nil}, "--late": {true, nil}},
@@ -168,6 +173,7 @@ var editFlags = func() map[string]flagSpec {
 	m := map[string]flagSpec{
 		"--every": {true, nil}, "--at": {true, nil}, "--in": {true, nil},
 		"--no-until": {false, nil}, "--no-until-done": {false, nil},
+		"--force": {false, nil},
 	}
 	for k, v := range addFlags {
 		if k != "--name" && k != "--by" && k != "--now" {
@@ -293,6 +299,7 @@ func parse(argv []string) *opts {
 	o.untilDone, o.forever, o.now = bools["--until-done"], bools["--forever"], bools["--now"]
 	o.all, o.json, o.follow = bools["--all"], bools["--json"], bools["--follow"]
 	o.enabled, o.disabled = bools["--enabled"], bools["--disabled"]
+	o.force = bools["--force"]
 	o.urgent, o.title = bools["--urgent"], set["--title"]
 	if o.enabled && o.disabled {
 		usageErr(o.verb, "argument --disabled: not allowed with argument --enabled")

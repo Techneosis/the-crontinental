@@ -263,6 +263,23 @@ into having no end. A refused edit changes nothing. A new schedule recomputes
 the next run from now. Enabling and disabling stay with `enable`/`disable`; an
 edit to a finished job says so and leaves it finished.
 
+### Agents keep to their own jobs
+
+Inside a Claude Code session (`CLAUDE_CODE_SESSION_ID` set), `rm`, `disable` and
+`edit` refuse a job whose `created_by` isn't this session's `claude:<id>`, and
+name who booked it, unless `--force` is passed. An edit that touches only
+`--note` or `--notify` is let through; `enable` is never guarded, since it
+can't lose anything. Outside a session nothing changes.
+
+It is keyed on *this session*, not on "booked by an agent", because a person's
+permanent jobs are mostly booked by asking an agent: guarding only
+`$USER`-owned jobs would protect almost nothing. And it covers every job, not
+only `--forever` ones, because a person's reminder for next month looks just as
+much like leftover clutter to an agent tidying `list`. An agent still cleans up
+after itself freely. The skill tells agents to pass `--force` only when the
+user named the job. It's a guard against carelessness, not a boundary: `--by`
+can write any `created_by`, and `--force` is one flag away. No schema change.
+
 ## Housekeeping
 
 A job tears itself down. When it can never run again — a one-off fired, a

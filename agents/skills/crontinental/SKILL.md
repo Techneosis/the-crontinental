@@ -145,5 +145,11 @@ have left running on this machine. Check `list` before adding a near-duplicate
 of something already scheduled. If a job's purpose goes away before its end
 does, `rm` it; finished jobs take care of themselves.
 
+Inside a session, `rm`, `disable` and `edit` refuse a job another session or
+the user booked, and say who booked it. Don't reach for `--force` to get past
+that: use it only when the user asked for that job by name ("stop the backup
+job"). A job you don't recognise in `list` is someone's; tell the user about it
+rather than removing it.
+
 Full reference: `docs/design.md` in the Crontinental repository
 (github.com/Techneosis/the-crontinental).

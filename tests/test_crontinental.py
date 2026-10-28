@@ -54,6 +54,9 @@ class Ledger(unittest.TestCase):
         self.hooks.mkdir()
         self.env = {**os.environ, "CRONTINENTAL_DB": self.db,
                     "CRONTINENTAL_NOTIFY_DIR": str(self.hooks)}
+        # the suite may itself run inside a Claude Code session; booking as one
+        # is opted into per test (the Guard tests)
+        self.env.pop("CLAUDE_CODE_SESSION_ID", None)
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -278,6 +281,78 @@ class Edit(Ledger):
         self.cli("every", "1h", "--name", "w", "--forever", "--", "true")
         self.assertIn("nothing to change", self.cli("edit", "w", ok=False).stderr)
         self.assertIn("no such job", self.cli("edit", "nope", "--forever", ok=False).stderr)
+
+
+class Guard(Ledger):
+    """Inside a Claude Code session, rm/disable/edit keep off jobs that session
+    didn't book unless --force; outside one, nothing changes."""
+
+    def as_session(self, sid):
+        self.env["CLAUDE_CODE_SESSION_ID"] = sid
+
+    def book_as_person(self, name):
+        self.env.pop("CLAUDE_CODE_SESSION_ID", None)
+        self.env["USER"] = "pat"
+        self.cli("every", "1d", "--name", name, "--forever", "--", "true")
+
+    def test_another_sessions_job_is_refused_without_force(self):
+        self.as_session("aaaaaaaa-1111")
+        self.cli("every", "1d", "--name", "w", "--forever", "--", "true")
+        self.as_session("bbbbbbbb-2222")
+        for args in (["rm", "w"], ["disable", "w"], ["edit", "w", "--until", "2 days"]):
+            p = self.cli(*args, ok=False)
+            self.assertEqual(p.returncode, 1, args)
+            self.assertIn("booked by claude:aaaaaaaa", p.stderr)
+            self.assertIn("--force", p.stderr)
+        self.assertEqual(self.job("w")[0], 1, "refused verbs change nothing")
+        self.assertEqual(self.job("w")[3], 1)
+
+    def test_a_persons_job_is_refused_too(self):
+        self.book_as_person("w")
+        self.as_session("bbbbbbbb-2222")
+        self.assertIn("booked by pat", self.cli("rm", "w", ok=False).stderr)
+        self.assertIsNotNone(self.job("w"))
+
+    def test_force_gets_past_it(self):
+        self.book_as_person("w")
+        self.as_session("bbbbbbbb-2222")
+        self.cli("disable", "w", "--force")
+        self.cli("edit", "w", "--until", "2 days", "--force")
+        self.cli("rm", "w", "--force")
+        self.assertIsNone(self.job("w"))
+
+    def test_a_session_handles_its_own_jobs_freely(self):
+        self.as_session("aaaaaaaa-1111")
+        self.cli("every", "1d", "--name", "w", "--forever", "--", "true")
+        self.cli("edit", "w", "--until-done")
+        self.cli("disable", "w")
+        self.cli("rm", "w")
+
+    def test_outside_a_session_nothing_is_guarded(self):
+        self.as_session("aaaaaaaa-1111")
+        self.cli("every", "1d", "--name", "w", "--forever", "--", "true")
+        self.env.pop("CLAUDE_CODE_SESSION_ID")
+        self.cli("disable", "w")
+        self.cli("rm", "w")
+
+    def test_a_note_or_notify_edit_is_let_through(self):
+        self.book_as_person("w")
+        self.as_session("bbbbbbbb-2222")
+        self.cli("edit", "w", "--note", "nightly backup", "--notify", "always")
+        p = self.cli("edit", "w", "--note", "x", "--timeout", "5m", ok=False)
+        self.assertIn("not going to edit", p.stderr)
+
+    def test_enable_is_not_guarded(self):
+        self.book_as_person("w")
+        self.cli("disable", "w")
+        self.as_session("bbbbbbbb-2222")
+        self.cli("enable", "w")
+
+    def test_an_unrecorded_booker_is_guarded(self):
+        self.book_as_person("w")
+        self.sql("UPDATE job SET created_by=NULL WHERE name='w'")
+        self.as_session("bbbbbbbb-2222")
+        self.assertIn("someone unrecorded", self.cli("rm", "w", ok=False).stderr)
 
 
 class Notify(Ledger):

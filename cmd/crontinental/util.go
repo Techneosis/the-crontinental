@@ -158,6 +158,24 @@ func provenance() string {
 	return "unknown"
 }
 
+// guardOthers: inside a Claude Code session, a verb that would stop or change a
+// job refuses one this session didn't book, unless --force says the user asked
+// for it. Keyed on the session rather than "booked by an agent", because a
+// person's permanent jobs are mostly booked through an agent. A guard against a
+// careless agent, not a boundary: --force and --by both get past it.
+func guardOthers(j *Job, verb string, force bool) {
+	if os.Getenv("CLAUDE_CODE_SESSION_ID") == "" || force || j.CreatedBy.String == provenance() {
+		return
+	}
+	by := j.CreatedBy.String
+	if by == "" {
+		by = "someone unrecorded"
+	}
+	die("%s was booked by %s, %s, not by this session; not going to %s it.\n"+
+		"  If the user asked for this job by name, repeat with --force.",
+		j.Name, by, humanize(timePtr(j.CreatedAt)), verb)
+}
+
 // joinCommand: one argument after `--` is a shell line, verbatim, so pipes and
 // && survive. Several are an argv, quoted safely. Both end up as a string for
 // the login shell.

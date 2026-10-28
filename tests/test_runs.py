@@ -39,6 +39,7 @@ class Runs(unittest.TestCase):
         os.mkdir(os.path.join(self.tmp.name, "notify.d"))  # empty: never the real hooks
         self.env = {**os.environ, "CRONTINENTAL_DB": self.db,
                     "CRONTINENTAL_NOTIFY_DIR": os.path.join(self.tmp.name, "notify.d")}
+        self.env.pop("CLAUDE_CODE_SESSION_ID", None)  # rm in teardown is unguarded
         # unit names are machine-wide on Linux: never collide with real jobs
         self.prefix = "t" + uuid.uuid4().hex[:8] + "-"
         self.names = []

@@ -43,16 +43,26 @@ _crontinental() {
             fi ;;
         edit)
             if [[ $cur == -* ]]; then
-                COMPREPLY=($(compgen -W $'--every\n--at\n--in\n--until\n--no-until\n--until-done\n--no-until-done\n--forever\n--workdir\n--timeout\n--catchup\n--notify\n--note\n--' -- "$cur"))
+                COMPREPLY=($(compgen -W $'--every\n--at\n--in\n--until\n--no-until\n--until-done\n--no-until-done\n--forever\n--workdir\n--timeout\n--catchup\n--notify\n--note\n--force\n--' -- "$cur"))
             elif ((COMP_CWORD == 2)); then
                 COMPREPLY=($(compgen -W "$(crontinental names 2>/dev/null)" -- "$cur"))
             fi ;;
-        show|run|rm)
+        show|run)
             ((COMP_CWORD == 2)) && COMPREPLY=($(compgen -W "$(crontinental names 2>/dev/null)" -- "$cur")) ;;
+        rm)
+            if [[ $cur == -* ]]; then
+                COMPREPLY=($(compgen -W "--force" -- "$cur"))
+            elif ((COMP_CWORD == 2)); then
+                COMPREPLY=($(compgen -W "$(crontinental names 2>/dev/null)" -- "$cur"))
+            fi ;;
         enable)
             ((COMP_CWORD == 2)) && COMPREPLY=($(compgen -W "$(crontinental names --disabled 2>/dev/null)" -- "$cur")) ;;
         disable)
-            ((COMP_CWORD == 2)) && COMPREPLY=($(compgen -W "$(crontinental names --enabled 2>/dev/null)" -- "$cur")) ;;
+            if [[ $cur == -* ]]; then
+                COMPREPLY=($(compgen -W "--force" -- "$cur"))
+            elif ((COMP_CWORD == 2)); then
+                COMPREPLY=($(compgen -W "$(crontinental names --enabled 2>/dev/null)" -- "$cur"))
+            fi ;;
     esac
 }
 complete -F _crontinental crontinental

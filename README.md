@@ -88,6 +88,15 @@ takes the call is up to the Management: see [The Switchboard](#the-switchboard).
 Claude Code session (from `CLAUDE_CODE_SESSION_ID`), or the user. `list` is a walk down the hall past every
 occupied room.
 
+**6. Staff don't touch another party's booking.** A Claude Code session at the
+desk may cancel, hold or change only the bookings it made itself. Asked to
+`rm`, `disable` or `edit` anyone else's, the desk names who made it and
+declines, until the session shows the Management's say-so with `--force`. Adding a
+note or changing how loudly the Management hears of trouble (`--note`,
+`--notify`) is allowed. The user, at the desk without a session, is never asked.
+It is a house rule against carelessness, not a lock on the door: the
+`--force` and the register's `--by` are both in plain sight.
+
 ---
 
 ## The Staff

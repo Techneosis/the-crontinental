@@ -270,6 +270,7 @@ func cmdRun(o *opts) {
 func cmdRm(o *opts) {
 	db := connect()
 	j := getJob(db, o.name)
+	guardOthers(j, "remove", o.force)
 	stopRun(j.Name)
 	mustExec(db, "DELETE FROM job WHERE id=?", j.ID)
 	fmt.Printf("removed %s\n", j.Name)
@@ -278,6 +279,9 @@ func cmdRm(o *opts) {
 func cmdToggle(o *opts, on bool) {
 	db := connect()
 	j := getJob(db, o.name)
+	if !on {
+		guardOthers(j, "disable", o.force)
+	}
 	var next *time.Time
 	if j.NextRun.Valid {
 		next = timePtr(j.NextRun.String)
