@@ -1,6 +1,6 @@
 ---
 name: crontinental
-description: Schedule a command to run later ON THIS MACHINE with Crontinental (`crontinental`) — once ("in 90 minutes", "at 7am tomorrow", "after the build") or recurring ("every weekday morning", "every 30 minutes", "nightly"). Use whenever work must happen after the current session ends, or on a repeat: "remind me to", "check back in an hour", "run this every morning", "retry that tonight", "keep polling until", "schedule a script", "set up a cron job", "crontab", "make this recurring", "run it on a timer". This is NOT the `schedule` skill (cloud routines, which cannot run anything on this machine), NOT `/loop` and NOT CronCreate (both last only as long as the session). Covers the CLI, how a job ends, schedule syntax, what happens when the machine sleeps, and reading a job's output.
+description: Schedule a command to run later ON THIS MACHINE with Crontinental (`crontinental`) — once ("in 90 minutes", "at 7am tomorrow", "after the build") or recurring ("every weekday morning", "every 30 minutes", "nightly"). Use whenever work must happen after the current session ends, or on a repeat: "remind me to", "check back in an hour", "run this every morning", "retry that tonight", "keep polling until", "schedule a script", "set up a cron job", "crontab", "make this recurring", "run it on a timer". Also the way to notify the user from any session, job or not: "notify me", "ping my phone", "update me on my phone", "let me know when". This is NOT the `schedule` skill (cloud routines, which cannot run anything on this machine), NOT `/loop` and NOT CronCreate (both last only as long as the session). Covers the CLI, how a job ends, schedule syntax, what happens when the machine sleeps, and reading a job's output, and `crontinental notify`.
 ---
 
 # Scheduling a command on this machine
@@ -144,6 +144,24 @@ minute; that is the tick.
   the same hooks as the job's own message, whatever `--notify` says (`--notify
   never` plus an explicit notify = quiet unless it matters). `--urgent` marks it
   critical, `--title` replaces the job name as the headline.
+
+## Telling the user something, now
+
+`crontinental notify` is not only for jobs. Any session or script can call it,
+and it rings the same hooks a job's report does (desktop, phone, whatever the
+user's `notify.d/` holds). When the user says "notify me", "ping my phone" or
+"let me know when X", this is the channel:
+
+```
+crontinental notify "red-team agent finished: 3 findings"
+crontinental notify --title "Deploy" "v1.4.2 is live"
+crontinental notify --urgent "build failed, needs you"
+```
+
+Save `--urgent` (critical) for things the user has to act on. Use `--tag` only
+with keys the user's hooks read. Outside a job the message goes under no job's
+name, so give it a `--title` when the text alone wouldn't say where it came
+from.
 
 ## Clean up after yourself
 
