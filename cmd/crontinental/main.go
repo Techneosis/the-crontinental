@@ -78,8 +78,8 @@ verbs:
   in <delay>          run once, after a delay (90m, 2h, 1d; 0 is now)
   at <time>           run once, at a time ("2026-09-15 09:00", "tomorrow 07:00", "now")
   every <spec>        repeat: a calendar spec ("Mon..Fri 07:30", "hourly") or an interval ("30m")
-  list [--all] [--json]   what is scheduled
-  show <name>         one job, in full, with its recent runs
+  list [--all] [--json]   what is scheduled (--json: each with its last_run)
+  show <name> [--json]   one job, in full, with its recent runs
   log <name> [-n N] [-f]  the job's output, from the journal
   run <name>          fire it now, without moving its schedule
   rm <name>           remove a job
@@ -162,7 +162,7 @@ var addFlags = map[string]flagSpec{
 var verbFlags = map[string]map[string]flagSpec{
 	"in": addFlags, "at": addFlags, "every": addFlags,
 	"list": {"--all": {false, nil}, "--json": {false, nil}},
-	"show": {}, "run": {}, "rm": {"--force": {false, nil}}, "enable": {},
+	"show": {"--json": {false, nil}}, "run": {}, "rm": {"--force": {false, nil}}, "enable": {},
 	"disable": {"--force": {false, nil}},
 	"log":     {"--lines": {true, nil}, "--follow": {false, nil}},
 	"prune":   {"--days": {true, nil}},

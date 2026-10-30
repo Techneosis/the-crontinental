@@ -101,15 +101,37 @@ func pad(s string, n int) string {
 }
 
 // listJSON prints every column in table order, as the Python version's
-// json.dumps([dict(row) ...]) did: integers as numbers, NULL as null.
+// json.dumps([dict(row) ...]) did: integers as numbers, NULL as null. Each job
+// also carries its latest run as last_run (null before the first one), so a
+// dashboard can show health without a show per job.
 func listJSON(db *sql.DB, q string) {
-	rows, err := db.Query(q)
+	jobs, ids := rowsJSON(db, q)
+	for i := range jobs {
+		runs, _ := rowsJSON(db, runQuery+" LIMIT 1", ids[i])
+		last := json.RawMessage("null")
+		if len(runs) > 0 {
+			last = runs[0]
+		}
+		jobs[i] = withKey(jobs[i], "last_run", last)
+	}
+	printJSON(jobs)
+}
+
+// runQuery is a job's runs, newest first, as show --json and last_run give them.
+const runQuery = `SELECT id, due_at, started_at, finished_at, status, outcome, late_sec, detail
+	FROM run WHERE job_id=? ORDER BY id DESC`
+
+// rowsJSON turns each row into a JSON object with the columns in query order,
+// and returns each row's id column alongside (0 when there is none).
+func rowsJSON(db *sql.DB, q string, args ...any) ([]json.RawMessage, []int64) {
+	rows, err := db.Query(q, args...)
 	if err != nil {
 		die("ledger: %v", err)
 	}
 	defer rows.Close()
 	cols, _ := rows.Columns()
-	var out []json.RawMessage
+	out := []json.RawMessage{}
+	var ids []int64
 	for rows.Next() {
 		vals := make([]any, len(cols))
 		ptrs := make([]any, len(cols))
@@ -120,6 +142,7 @@ func listJSON(db *sql.DB, q string) {
 			die("ledger: %v", err)
 		}
 		var b bytes.Buffer
+		var id int64
 		b.WriteString("{")
 		for i, c := range cols {
 			if i > 0 {
@@ -129,6 +152,9 @@ func listJSON(db *sql.DB, q string) {
 			v := vals[i]
 			if bs, ok := v.([]byte); ok {
 				v = string(bs)
+			}
+			if n, ok := v.(int64); ok && c == "id" {
+				id = n
 			}
 			jv, _ := json.Marshal(v)
 			if c == "tags" { // stored as JSON: shown as the object, not a string of it
@@ -140,12 +166,36 @@ func listJSON(db *sql.DB, q string) {
 		}
 		b.WriteString("}")
 		out = append(out, b.Bytes())
+		ids = append(ids, id)
 	}
-	if out == nil {
-		out = []json.RawMessage{}
+	return out, ids
+}
+
+// withKey appends one key to a JSON object, keeping the others in order.
+func withKey(obj json.RawMessage, key string, v json.RawMessage) json.RawMessage {
+	k, _ := json.Marshal(key)
+	b := append([]byte{}, obj[:len(obj)-1]...)
+	if len(obj) > 2 {
+		b = append(b, ',')
 	}
-	enc, _ := json.MarshalIndent(out, "", "  ")
+	b = append(b, k...)
+	b = append(b, ':')
+	b = append(b, v...)
+	return append(b, '}')
+}
+
+func printJSON(v any) {
+	enc, _ := json.MarshalIndent(v, "", "  ")
 	fmt.Println(string(enc))
+}
+
+// showJSON is one job as list --json gives it, plus its last 20 runs (newest
+// first).
+func showJSON(db *sql.DB, j *Job) {
+	jobs, _ := rowsJSON(db, "SELECT * FROM job WHERE id=?", j.ID)
+	runs, _ := rowsJSON(db, runQuery+" LIMIT 20", j.ID)
+	rj, _ := json.Marshal(runs)
+	printJSON(withKey(jobs[0], "runs", rj))
 }
 
 // cmdNames prints bare names, one per line -- what tab completion reads. Every
@@ -173,6 +223,10 @@ func cmdNames(o *opts) {
 func cmdShow(o *opts) {
 	db := connect()
 	j := getJob(db, o.name)
+	if o.json {
+		showJSON(db, j)
+		return
+	}
 	fmt.Printf("name        %s\n", j.Name)
 	fmt.Printf("command     %s\n", j.Command)
 	if j.Workdir.Valid {

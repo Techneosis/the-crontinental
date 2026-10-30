@@ -48,7 +48,11 @@ _crontinental() {
                 COMPREPLY=($(compgen -W "$(crontinental names 2>/dev/null)" -- "$cur"))
             fi ;;
         show|run)
-            ((COMP_CWORD == 2)) && COMPREPLY=($(compgen -W "$(crontinental names 2>/dev/null)" -- "$cur")) ;;
+            if [[ $verb == show && $cur == -* ]]; then
+                COMPREPLY=($(compgen -W "--json" -- "$cur"))
+            elif ((COMP_CWORD == 2)); then
+                COMPREPLY=($(compgen -W "$(crontinental names 2>/dev/null)" -- "$cur"))
+            fi ;;
         rm)
             if [[ $cur == -* ]]; then
                 COMPREPLY=($(compgen -W "--force" -- "$cur"))

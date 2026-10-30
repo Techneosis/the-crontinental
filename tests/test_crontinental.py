@@ -527,6 +527,21 @@ class Notify(Ledger):
         self.assertEqual(jobs["j"]["tags"], {"topic": "ops", "url": "https://x/?a=b"})
         self.assertEqual(jobs["k"]["tags"], {})
 
+    def test_json_carries_runs_newest_first(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--", "true")
+        self.cli("every", "1h", "--name", "k", "--forever", "--", "true")
+        for status, outcome in ((0, "ok"), (3, "fail")):
+            self.sql("INSERT INTO run (job_id, started_at, finished_at, status, outcome)"
+                     " SELECT id, ?, ?, ?, ? FROM job WHERE name='j'",
+                     ago(minutes=5), ago(minutes=4), status, outcome)
+        jobs = {j["name"]: j for j in json.loads(self.cli("list", "--json").stdout)}
+        self.assertEqual((jobs["j"]["last_run"]["outcome"], jobs["j"]["last_run"]["status"]), ("fail", 3))
+        self.assertIsNone(jobs["k"]["last_run"])
+        shown = json.loads(self.cli("show", "j", "--json").stdout)
+        self.assertEqual(shown["name"], "j")
+        self.assertEqual([r["outcome"] for r in shown["runs"]], ["fail", "ok"])
+        self.assertEqual(json.loads(self.cli("show", "k", "--json").stdout)["runs"], [])
+
     def test_show_says_where_notifications_go(self):
         self.cli("every", "1h", "--name", "j", "--forever", "--", "true")
         self.assertIn("nobody is told", self.cli("show", "j").stdout)
