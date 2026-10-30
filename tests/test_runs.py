@@ -96,6 +96,27 @@ class Runs(unittest.TestCase):
             time.sleep(0.2)
         self.assertIn("instant-line", self.cli("log", done, "-n", "20"))
 
+    def test_log_run_shows_that_run_alone(self):
+        name = self.book("perrun", "echo line-$(date +%s%N); sleep 1", "--forever")
+        self.cli("run", name)
+        self.wait_for(name, 1)
+        time.sleep(1.2)  # the ledger keeps whole seconds; runs further apart never share one
+        self.cli("run", name)
+        self.wait_for(name, 2)
+        with sqlite3.connect(self.db) as c:
+            ids = [r[0] for r in c.execute("SELECT r.id FROM run r JOIN job j ON j.id=r.job_id"
+                                           " WHERE j.name=? ORDER BY r.id", (name,))]
+        logs = []
+        for run_id in ids:
+            deadline = time.time() + 5
+            out = ""
+            while "line-" not in out and time.time() < deadline:
+                out = self.cli("log", name, "--run", str(run_id))
+                time.sleep(0.2)
+            logs.append([l for l in out.splitlines() if "line-" in l])
+        self.assertEqual([len(l) for l in logs], [1, 1], logs)
+        self.assertNotEqual(logs[0][0].split("line-")[1], logs[1][0].split("line-")[1])
+
     def name(self, short):
         name = self.prefix + short
         self.names.append(name)

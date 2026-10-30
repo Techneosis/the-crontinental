@@ -542,6 +542,17 @@ class Notify(Ledger):
         self.assertEqual([r["outcome"] for r in shown["runs"]], ["fail", "ok"])
         self.assertEqual(json.loads(self.cli("show", "k", "--json").stdout)["runs"], [])
 
+    def test_log_run_needs_a_run_of_that_job(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--", "true")
+        self.cli("every", "1h", "--name", "k", "--forever", "--", "true")
+        self.sql("INSERT INTO run (job_id, outcome) SELECT id, 'skipped' FROM job WHERE name='k'")
+        [(run_id,)] = self.sql("SELECT id FROM run")
+        p = self.cli("log", "j", "--run", str(run_id), ok=False)
+        self.assertEqual(p.returncode, 1)
+        self.assertIn("j has no run", p.stderr)
+        self.assertIn("never started", self.cli("log", "k", "--run", str(run_id)).stdout)
+        self.assertEqual(self.cli("log", "k", "--run", str(run_id), "-f", ok=False).returncode, 2)
+
     def test_show_says_where_notifications_go(self):
         self.cli("every", "1h", "--name", "j", "--forever", "--", "true")
         self.assertIn("nobody is told", self.cli("show", "j").stdout)

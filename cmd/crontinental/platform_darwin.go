@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -193,6 +194,52 @@ func stopRun(name string) {
 	}
 	if execPid > 0 {
 		_ = syscall.Kill(execPid, syscall.SIGKILL)
+	}
+}
+
+// runBanner is the line exec writes as a run begins. Logs written before the
+// banner carried the run id have "run started", found by its time instead.
+var runBanner = regexp.MustCompile(`^── (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) run (?:(\d+) )?started`)
+
+// showRunLog prints one run's block of the job's log: from its banner up to
+// the next run's.
+func showRunLog(name string, run int64, from time.Time, _ time.Time, _ *time.Time, lines int) {
+	p := logPath(name)
+	var all []byte
+	for _, f := range []string{p + ".1", p} {
+		if b, err := os.ReadFile(f); err == nil {
+			all = append(all, b...)
+		}
+	}
+	var block []string
+	in := false
+	sc := bufio.NewScanner(bytes.NewReader(all))
+	sc.Buffer(make([]byte, 64*1024), 16*1024*1024)
+	for sc.Scan() {
+		line := sc.Text()
+		if m := runBanner.FindStringSubmatch(line); m != nil {
+			if in {
+				break // the next run
+			}
+			if m[2] != "" {
+				in = m[2] == strconv.FormatInt(run, 10)
+			} else if t, err := time.ParseInLocation("2006-01-02 15:04:05", m[1], time.Local); err == nil {
+				in = t.Sub(from).Abs() <= 2*time.Second
+			}
+		}
+		if in {
+			block = append(block, line)
+		}
+	}
+	if len(block) == 0 {
+		fmt.Printf("no output found for run %d in %s (it may have rotated away)\n", run, p)
+		return
+	}
+	if lines > 0 && len(block) > lines {
+		block = block[len(block)-lines:]
+	}
+	for _, l := range block {
+		fmt.Println(l)
 	}
 }
 

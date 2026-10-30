@@ -311,6 +311,7 @@ crontinental list              who is in residence, and when they're next due
 crontinental list --all        including guests checked out and awaiting the cleaners
 crontinental show <name>       one guest's reservation, checkout terms, last 10 stays
 crontinental log <name>        their logbook (-f to keep reading)
+crontinental log <name> --run N   the logbook of one stay alone
 crontinental run <name>        seat them now, without moving their reservation
 crontinental edit <name> …     change a reservation, keeping the guest's history
 crontinental disable <name>    hold the room; a held room is never cleaned

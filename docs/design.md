@@ -222,6 +222,7 @@ crontinental list          what is scheduled, next run, last outcome
 crontinental list --all    including finished and disabled jobs
 crontinental show <name>   one job in full, with its last 10 runs
 crontinental log <name>    its output, from the journal (-f to follow)
+crontinental log <name> --run ID   one run's output alone (ids from show --json)
 crontinental run <name>    fire it now WITHOUT moving its schedule
 crontinental edit <name>   change it in place (see below)
 ```

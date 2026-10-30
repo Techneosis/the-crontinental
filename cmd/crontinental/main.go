@@ -53,7 +53,9 @@ type opts struct {
 
 	all, json         bool
 	lines             int
+	linesSet          bool
 	follow            bool
+	run               int64
 	enabled, disabled bool
 	count             int
 	days              int
@@ -81,6 +83,7 @@ verbs:
   list [--all] [--json]   what is scheduled (--json: each with its last_run)
   show <name> [--json]   one job, in full, with its recent runs
   log <name> [-n N] [-f]  the job's output, from the journal
+  log <name> --run ID     one run's output (the id is in show --json)
   run <name>          fire it now, without moving its schedule
   rm <name>           remove a job
   enable <name>       resume a disabled job
@@ -164,7 +167,7 @@ var verbFlags = map[string]map[string]flagSpec{
 	"list": {"--all": {false, nil}, "--json": {false, nil}},
 	"show": {"--json": {false, nil}}, "run": {}, "rm": {"--force": {false, nil}}, "enable": {},
 	"disable": {"--force": {false, nil}},
-	"log":     {"--lines": {true, nil}, "--follow": {false, nil}},
+	"log":     {"--lines": {true, nil}, "--follow": {false, nil}, "--run": {true, nil}},
 	"prune":   {"--days": {true, nil}},
 	"tick":    {}, "path": {},
 	"edit":   editFlags,
@@ -318,6 +321,8 @@ func parse(argv []string) *opts {
 		usageErr(o.verb, "argument --disabled: not allowed with argument --enabled")
 	}
 	o.lines = intFlag(o.verb, set, "--lines", 50)
+	_, o.linesSet = set["--lines"]
+	o.run = int64(intFlag(o.verb, set, "--run", 0))
 	o.days = intFlag(o.verb, set, "--days", 0)
 	o.count = intFlag(o.verb, set, "--count", 3)
 	if o.verb == "check" {

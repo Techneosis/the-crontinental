@@ -350,7 +350,8 @@ func cmdExec(o *opts) {
 	if j.Workdir.Valid {
 		workdir = j.Workdir.String
 	}
-	banner(fmt.Sprintf("run started (due %s, late %ds)", dueAt.Local().Format("2006-01-02 15:04:05"), o.late))
+	// The run id in the banner is what `log --run` finds the run by.
+	banner(fmt.Sprintf("run %d started (due %s, late %ds)", runID, dueAt.Local().Format("2006-01-02 15:04:05"), o.late))
 	cmd := exec.Command(shellArgv(j.Command)[0], shellArgv(j.Command)[1:]...)
 	cmd.Dir = workdir
 	// The job's name, so a `crontinental notify` inside it speaks as the job.

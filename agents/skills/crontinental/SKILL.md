@@ -36,6 +36,7 @@ crontinental every 30m --now --name sync --forever -- ./sync   # once now, then 
 crontinental list            what is scheduled, next run, last outcome
 crontinental show <name>     one job in full, with its last 10 runs
 crontinental log <name>      what it printed
+crontinental log <name> --run <id>   what one run printed (ids: show <name> --json)
 crontinental run <name>      fire it now, without moving its schedule
 crontinental edit <name> …   change it in place: --until, --until-done, --forever,
                              --every, --timeout, --notify, --tag, or a new command after --

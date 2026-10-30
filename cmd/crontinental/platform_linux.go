@@ -109,6 +109,25 @@ func showLog(name string, lines int, follow bool) {
 	_ = cmd.Run()
 }
 
+// showRunLog prints one run's lines: the job's journal from lo to hi (to now,
+// while it runs). The overlap guard keeps a job's runs from sharing time, so
+// the window holds that run alone, to the second: the ledger's times are
+// whole seconds, so two runs a second apart can share their edge.
+func showRunLog(name string, _ int64, _ time.Time, lo time.Time, hi *time.Time, lines int) {
+	u := unitName(name)
+	args := []string{"--user", "--no-pager", "--since", "@" + strconv.FormatInt(lo.Unix(), 10)}
+	if hi != nil {
+		args = append(args, "--until", "@"+strconv.FormatInt(hi.Unix(), 10))
+	}
+	if lines > 0 {
+		args = append(args, "-n", strconv.Itoa(lines))
+	}
+	args = append(args, "_SYSTEMD_USER_UNIT="+u, "+", "USER_UNIT="+u, "+", "SYSLOG_IDENTIFIER="+logIdent(name))
+	cmd := exec.Command("journalctl", args...)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	_ = cmd.Run()
+}
+
 func runTool(name string, args ...string) (stdout, stderr []byte, err error) {
 	cmd := exec.Command(name, args...)
 	var out, errb strings.Builder

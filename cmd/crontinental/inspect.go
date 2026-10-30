@@ -314,8 +314,56 @@ func cmdShow(o *opts) {
 }
 
 func cmdLog(o *opts) {
-	j := getJob(connect(), o.name)
-	showLog(j.Name, o.lines, o.follow)
+	db := connect()
+	j := getJob(db, o.name)
+	if o.run == 0 {
+		showLog(j.Name, o.lines, o.follow)
+		return
+	}
+	if o.follow {
+		usageErr(o.verb, "argument --follow: not allowed with argument --run")
+	}
+	var started, finished sql.NullString
+	err := db.QueryRow("SELECT started_at, finished_at FROM run WHERE id=? AND job_id=?", o.run, j.ID).
+		Scan(&started, &finished)
+	if err == sql.ErrNoRows {
+		die("%s has no run %d", j.Name, o.run)
+	} else if err != nil {
+		die("ledger: %v", err)
+	}
+	if !started.Valid {
+		fmt.Println("this run never started")
+		return
+	}
+	// The run's time, widened a little for systemd's own start and resource
+	// lines, but never into the job's runs either side of it.
+	from := parseISO(started.String)
+	lo := from.Add(-time.Second)
+	var prevEnd sql.NullString
+	db.QueryRow("SELECT max(finished_at) FROM run WHERE job_id=? AND id<?", j.ID, o.run).Scan(&prevEnd)
+	if prevEnd.Valid {
+		if t := parseISO(prevEnd.String); t.After(lo) {
+			lo = t
+		}
+	}
+	var hi *time.Time
+	if finished.Valid {
+		t := parseISO(finished.String).Add(2 * time.Second)
+		var nextStart sql.NullString
+		db.QueryRow("SELECT min(started_at) FROM run WHERE job_id=? AND id>?", j.ID, o.run).Scan(&nextStart)
+		if nextStart.Valid {
+			if n := parseISO(nextStart.String); n.Before(t) {
+				t = n
+			}
+		}
+		hi = &t
+	}
+	// A whole run unless -n asks for its tail.
+	lines := 0
+	if o.linesSet {
+		lines = o.lines
+	}
+	showRunLog(j.Name, o.run, from, lo, hi, lines)
 }
 
 func cmdRun(o *opts) {

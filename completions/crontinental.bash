@@ -25,7 +25,7 @@ _crontinental() {
         --catchup) COMPREPLY=($(compgen -W "run skip" -- "$cur")); return ;;
         --notify)  COMPREPLY=($(compgen -W "never fail always" -- "$cur")); return ;;
         --workdir) COMPREPLY=($(compgen -d -- "$cur")); return ;;
-        --name|--timeout|--until|--note|--by|--days|-n|--lines|--every|--at|--in|--tag|--no-tag|--title) return ;;
+        --name|--timeout|--until|--note|--by|--days|-n|--lines|--run|--every|--at|--in|--tag|--no-tag|--title) return ;;
     esac
 
     local IFS=$'\n'
@@ -37,7 +37,7 @@ _crontinental() {
         notify) COMPREPLY=($(compgen -W $'--urgent\n--title\n--tag' -- "$cur")) ;;
         log)
             if [[ $cur == -* ]]; then
-                COMPREPLY=($(compgen -W $'--lines\n--follow' -- "$cur"))
+                COMPREPLY=($(compgen -W $'--lines\n--follow\n--run' -- "$cur"))
             elif ((COMP_CWORD == 2)); then
                 COMPREPLY=($(compgen -W "$(crontinental names 2>/dev/null)" -- "$cur"))
             fi ;;
