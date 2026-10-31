@@ -164,6 +164,10 @@ with keys the user's hooks read. Outside a job the message goes under no job's
 name, so give it a `--title` when the text alone wouldn't say where it came
 from.
 
+Every notification is also kept in the ledger for 30 days: `crontinental
+messages` lists them, newest first. When the user asks what they were told, or
+missed a notification, read it there.
+
 ## Clean up after yourself
 
 Jobs record the session that created them, so `list` is the audit of what agents

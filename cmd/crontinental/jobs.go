@@ -264,6 +264,7 @@ func advance(db *sql.DB, j *Job, t time.Time) error {
 // retainSec, which only an `exec` killed too hard to write down its ending
 // leaves behind.
 func reap(db *sql.DB, t time.Time) {
+	mustExec(db, "DELETE FROM message WHERE at<?", iso(t.Add(-messageRetainSec*time.Second)))
 	cutoff := iso(t.Add(-retainSec * time.Second))
 	mustExec(db, `DELETE FROM job WHERE finished_at IS NOT NULL AND finished_at<? AND NOT EXISTS
 		(SELECT 1 FROM run WHERE run.job_id=job.id AND outcome='running' AND started_at>=?)`,
@@ -325,6 +326,7 @@ func cmdExec(o *opts) {
 	res := mustExec(db, `INSERT INTO run (job_id, unit, due_at, started_at, outcome, late_sec)
 		VALUES (?,?,?,?, 'running', ?)`, j.ID, ref, iso(dueAt), iso(started), o.late)
 	runID, _ := res.LastInsertId()
+	currentRun = runID
 
 	finish := func(status int, outcome, detail string) {
 		mustExec(db, "UPDATE run SET finished_at=?, status=?, outcome=?, detail=? WHERE id=?",
@@ -355,7 +357,8 @@ func cmdExec(o *opts) {
 	cmd := exec.Command(shellArgv(j.Command)[0], shellArgv(j.Command)[1:]...)
 	cmd.Dir = workdir
 	// The job's name, so a `crontinental notify` inside it speaks as the job.
-	cmd.Env = append(os.Environ(), "CRONTINENTAL_JOB="+j.Name)
+	// The run too, so its message names the run whose output it is about.
+	cmd.Env = append(os.Environ(), "CRONTINENTAL_JOB="+j.Name, fmt.Sprintf("CRONTINENTAL_RUN=%d", runID))
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, os.Stdout, os.Stderr
 	// Its own process group, so a stop or a timeout reaches everything the
 	// command started, not just the shell.

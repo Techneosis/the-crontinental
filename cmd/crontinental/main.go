@@ -94,6 +94,8 @@ verbs:
   notify [--urgent] [--title T] [--tag K=V] <text>   tell the notify hooks
                       something, now; inside a job it is sent as that job's,
                       with its tags (a --tag here adds to them, for this message)
+  messages [-n N] [--json]   every notification sent, newest first (default 20;
+                      kept 30 days), hooks or none
   path                print the ledger path
   version             which build this is
 
@@ -170,11 +172,12 @@ var verbFlags = map[string]map[string]flagSpec{
 	"log":     {"--lines": {true, nil}, "--follow": {false, nil}, "--run": {true, nil}},
 	"prune":   {"--days": {true, nil}},
 	"tick":    {}, "path": {},
-	"edit":   editFlags,
-	"check":  {"--count": {true, nil}, "--lines": {true, nil}},
-	"exec":   {"--due": {true, nil}, "--late": {true, nil}},
-	"names":  {"--enabled": {false, nil}, "--disabled": {false, nil}},
-	"notify": {"--urgent": {false, nil}, "--title": {true, nil}, "--tag": {true, nil}},
+	"edit":     editFlags,
+	"check":    {"--count": {true, nil}, "--lines": {true, nil}},
+	"exec":     {"--due": {true, nil}, "--late": {true, nil}},
+	"names":    {"--enabled": {false, nil}, "--disabled": {false, nil}},
+	"notify":   {"--urgent": {false, nil}, "--title": {true, nil}, "--tag": {true, nil}},
+	"messages": {"--lines": {true, nil}, "--json": {false, nil}},
 }
 
 var editFlags = func() map[string]flagSpec {
@@ -232,7 +235,7 @@ func parse(argv []string) *opts {
 	o.verb = argv[0]
 	flags, ok := verbFlags[o.verb]
 	if !ok {
-		usageErr("", "invalid choice: %q (choose from in, at, every, list, show, edit, log, run, rm, enable, disable, prune, check, notify, path)", o.verb)
+		usageErr("", "invalid choice: %q (choose from in, at, every, list, show, edit, log, run, rm, enable, disable, prune, check, notify, messages, path)", o.verb)
 	}
 
 	var pos []string
@@ -322,6 +325,9 @@ func parse(argv []string) *opts {
 	}
 	o.lines = intFlag(o.verb, set, "--lines", 50)
 	_, o.linesSet = set["--lines"]
+	if o.verb == "messages" && !o.linesSet {
+		o.lines = 20
+	}
 	o.run = int64(intFlag(o.verb, set, "--run", 0))
 	o.days = intFlag(o.verb, set, "--days", 0)
 	o.count = intFlag(o.verb, set, "--count", 3)
@@ -388,6 +394,8 @@ func main() {
 		cmdNames(o)
 	case "notify":
 		cmdNotify(o)
+	case "messages":
+		cmdMessages(o)
 	case "check":
 		cmdCheck(o)
 	case "path":

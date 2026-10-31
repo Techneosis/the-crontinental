@@ -560,6 +560,48 @@ class Notify(Ledger):
         self.assertIn("fail → phone", self.cli("show", "j").stdout)
 
 
+class MessageBook(Notify):
+    """Every notification is written down first, so a device that missed it
+    can read it back."""
+
+    def messages(self, *args):
+        return json.loads(self.cli("messages", "--json", *args).stdout)
+
+    def test_a_message_is_recorded_even_with_nobody_wired(self):
+        p = self.cli("notify", "--urgent", "--title", "Deploy", "--tag", "topic=ops", "v1.4.2 is live")
+        self.assertIn("nobody was told", p.stderr)
+        [m] = self.messages()
+        self.assertEqual((m["event"], m["job"], m["run"], m["urgency"], m["headline"], m["body"], m["tags"]),
+                         ("message", None, None, "critical", "Deploy", "v1.4.2 is live", {"topic": "ops"}))
+        self.assertIn("Deploy: v1.4.2 is live", self.cli("messages").stdout)
+
+    def test_hooks_get_the_message_id_and_the_run(self):
+        out = self.recorder()
+        p = self.run_job(f"{shlex.quote(BIN)} notify 'half way'; exit 1")
+        self.assertEqual(p.returncode, 1, p.stderr)
+        calls = sorted(self.calls(out), key=lambda c: int(c[1]["id"]))
+        [run_id] = [r for (r,) in self.sql("SELECT id FROM run")]
+        self.assertEqual([(ev["event"], ev["run"]) for _, ev in calls], [("message", run_id), ("fail", run_id)])
+        self.assertEqual([env["CRONTINENTAL_MESSAGE"] for env, _ in calls], [str(ev["id"]) for _, ev in calls])
+        self.assertEqual([env["CRONTINENTAL_RUN"] for env, _ in calls], [str(run_id)] * 2)
+        book = self.messages()
+        self.assertEqual([(m["id"], m["event"], m["job"], m["run"]) for m in book],
+                         [(ev["id"], ev["event"], "j", run_id) for _, ev in reversed(calls)])
+
+    def test_newest_first_and_limited(self):
+        for i in range(5):
+            self.cli("notify", f"m{i}")
+        self.assertEqual([m["body"] for m in self.messages("-n", "2")], ["m4", "m3"])
+        self.assertEqual(len(self.messages()), 5)
+
+    def test_the_tick_forgets_messages_after_30_days(self):
+        self.cli("notify", "old")
+        self.cli("notify", "new")
+        self.sql("UPDATE message SET at=? WHERE body='old'", ago(days=31))
+        self.cli("tick")
+        self.assertEqual([m["body"] for m in self.messages()], ["new"])
+
+
 class Migration(Ledger):
     def test_v1_ledger_is_migrated_without_stopping_anything(self):
         with sqlite3.connect(self.db) as c:
@@ -573,7 +615,7 @@ class Migration(Ledger):
             c.execute("INSERT INTO job (name, command, kind, next_run, enabled, timeout_sec, created_at)"
                       " VALUES ('fired','true','once',NULL,0,3600,?)", (ago(days=10),))
         self.cli("list")
-        self.assertEqual(self.sql("PRAGMA user_version"), [(3,)])
+        self.assertEqual(self.sql("PRAGMA user_version"), [(4,)])
         self.assertEqual(self.job("legacy")[3], 1, "open-ended repeats become --forever")
         self.assertEqual(self.job("ending")[3], 0, "a repeat with --until keeps its end")
         self.assertIsNotNone(self.job("fired")[2], "finished one-offs start the retention clock")
@@ -592,10 +634,22 @@ class Migration(Ledger):
                       " ('kept','true','repeat','1h',3600,?,1,3600,?)",
                       (ago(minutes=-30), ago(days=10)))
         self.assertIn("kept", self.cli("list").stdout)
-        self.assertEqual(self.sql("PRAGMA user_version"), [(3,)])
+        self.assertEqual(self.sql("PRAGMA user_version"), [(4,)])
         self.assertEqual(self.sql("SELECT tags FROM job WHERE name='kept'"), [(None,)])
         self.cli("edit", "kept", "--tag", "topic=ops")
         self.assertIn("topic=ops", self.cli("show", "kept").stdout)
+
+    def test_v3_ledger_gains_the_message_book(self):
+        with sqlite3.connect(self.db) as c:
+            c.executescript(V1_SCHEMA)
+        self.cli("list")                       # v1 -> current, then wind back to v3
+        with sqlite3.connect(self.db) as c:
+            c.execute("DROP TABLE message")
+            c.execute("PRAGMA user_version=3")
+        self.assertIn("no messages", self.cli("messages").stdout)
+        self.assertEqual(self.sql("PRAGMA user_version"), [(4,)])
+        self.cli("notify", "hello")
+        self.assertEqual(self.sql("SELECT body FROM message"), [("hello",)])
 
 
 if __name__ == "__main__":

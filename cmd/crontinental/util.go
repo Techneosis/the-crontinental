@@ -27,6 +27,8 @@ const (
 	// How long a finished job stays around for show/log before the tick
 	// deletes it.
 	retainSec = 3 * 86400
+	// messageRetainSec: how long the message book keeps a notification.
+	messageRetainSec = 30 * 86400
 )
 
 // isoLayout is what the ledger stores: Python's datetime.isoformat() for a

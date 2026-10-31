@@ -10,10 +10,16 @@ package main
 // finish. A hook that fails, hangs or is missing never changes a run's outcome;
 // what it printed, and how it failed, goes to whatever log the caller writes to
 // (a run's own, when exec is the caller).
+//
+// Every notification is also written in the ledger's message book first, hooks
+// or none, so it can be read back (`messages`) by whoever missed it: a phone in
+// a pocket, a toast that timed out. Hooks get its id, which is how a device
+// links its notification to the record.
 
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -72,8 +78,10 @@ func hooks() []string {
 // event is what a hook is told. Status and Elapsed are absent when there is
 // none (a run that never started has no exit status).
 type event struct {
-	Event    string            `json:"event"` // fail, killed, error, unstartable, done, ok, message
-	Job      string            `json:"job"`   // empty for a message sent from outside any job
+	ID       int64             `json:"id,omitempty"`  // in the message book; absent if it couldn't be written
+	Event    string            `json:"event"`         // fail, killed, error, unstartable, done, ok, message
+	Job      string            `json:"job"`           // empty for a message sent from outside any job
+	Run      int64             `json:"run,omitempty"` // the run it is about, or was sent from
 	Status   *int              `json:"status,omitempty"`
 	Elapsed  *int              `json:"elapsed,omitempty"`
 	Urgency  string            `json:"urgency"` // critical or low
@@ -94,10 +102,6 @@ func notify(j *Job, kind, headline, body string, critical bool, status, elapsed 
 
 // notifyTagged is notify with extra tags laid over the job's, for one message.
 func notifyTagged(j *Job, extra map[string]string, kind, headline, body string, critical bool, status, elapsed *int) int {
-	hs := hooks()
-	if len(hs) == 0 {
-		return 0
-	}
 	if j == nil {
 		j = &Job{}
 	}
@@ -117,7 +121,13 @@ func notifyTagged(j *Job, extra map[string]string, kind, headline, body string, 
 		ev.Tags[k] = v
 	}
 	ev.Host, _ = os.Hostname()
+	ev.Run = runOf()
+	recordMessage(&ev)
 
+	hs := hooks()
+	if len(hs) == 0 {
+		return 0
+	}
 	payload, _ := json.Marshal(ev)
 	env := append(hookEnviron(),
 		"CRONTINENTAL_EVENT="+ev.Event, "CRONTINENTAL_JOB="+ev.Job,
@@ -130,6 +140,12 @@ func notifyTagged(j *Job, extra map[string]string, kind, headline, body string, 
 	}
 	if elapsed != nil {
 		env = append(env, "CRONTINENTAL_ELAPSED="+strconv.Itoa(*elapsed))
+	}
+	if ev.ID != 0 {
+		env = append(env, "CRONTINENTAL_MESSAGE="+strconv.FormatInt(ev.ID, 10))
+	}
+	if ev.Run != 0 {
+		env = append(env, "CRONTINENTAL_RUN="+strconv.FormatInt(ev.Run, 10))
 	}
 
 	var wg sync.WaitGroup
@@ -170,6 +186,90 @@ func cmdNotify(o *opts) {
 	}
 	if notifyTagged(j, extra, "message", title, o.text, o.urgent, nil, nil) == 0 {
 		fmt.Fprintf(os.Stderr, "crontinental: nobody was told: no hooks in %s\n", notifyDir())
+	}
+}
+
+// currentRun is the run this process is, when it is exec.
+var currentRun int64
+
+// runOf is the run a notification belongs to: exec's own, or, for a
+// `crontinental notify` from inside a run, the one exec named in its
+// environment.
+func runOf() int64 {
+	if currentRun != 0 {
+		return currentRun
+	}
+	n, _ := strconv.ParseInt(os.Getenv("CRONTINENTAL_RUN"), 10, 64)
+	return n
+}
+
+// recordMessage writes ev in the message book and sets its id. A ledger that
+// cannot be written costs the record, never the notification, so this
+// complains and carries on rather than dying.
+func recordMessage(ev *event) {
+	db, err := sql.Open("sqlite", dbPath()+"?_pragma=busy_timeout(10000)")
+	if err == nil {
+		defer db.Close()
+		_, err = db.Exec(messageSchema)
+	}
+	var res sql.Result
+	if err == nil {
+		tags, _ := json.Marshal(ev.Tags)
+		var job, run any
+		if ev.Job != "" {
+			job = ev.Job
+		}
+		if ev.Run != 0 {
+			run = ev.Run
+		}
+		res, err = db.Exec(`INSERT INTO message (at, event, job, run_id, urgency, headline, body, tags)
+			VALUES (?,?,?,?,?,?,?,?)`, iso(now()), ev.Event, job, run, ev.Urgency, ev.Headline, ev.Body, string(tags))
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "crontinental: the message book: %v\n", err)
+		return
+	}
+	ev.ID, _ = res.LastInsertId()
+}
+
+// cmdMessages reads the message book back, newest first.
+func cmdMessages(o *opts) {
+	db := connect()
+	q := `SELECT id, at, event, job, run_id AS run, urgency, headline, body, tags
+		FROM message ORDER BY id DESC LIMIT ?`
+	if o.json {
+		rows, _ := rowsJSON(db, q, o.lines)
+		printJSON(rows)
+		return
+	}
+	rows, err := db.Query(q, o.lines)
+	if err != nil {
+		die("ledger: %v", err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var id int64
+		var at, kind, urgency, headline, body string
+		var job, tags sql.NullString
+		var run sql.NullInt64
+		if err := rows.Scan(&id, &at, &kind, &job, &run, &urgency, &headline, &body, &tags); err != nil {
+			die("ledger: %v", err)
+		}
+		mark := " "
+		if urgency == "critical" {
+			mark = "!"
+		}
+		who := job.String
+		if who == "" {
+			who = "-"
+		}
+		fmt.Printf("%5d %s %s  %-20s %s: %s\n", id, mark, parseISO(at).Local().Format("Jan _2 15:04"),
+			truncate(who, 20), headline, strings.ReplaceAll(body, "\n", " "))
+		n++
+	}
+	if n == 0 {
+		fmt.Println("no messages")
 	}
 }
 
