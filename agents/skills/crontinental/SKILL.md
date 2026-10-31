@@ -1,6 +1,6 @@
 ---
 name: crontinental
-description: Schedule a command to run later ON THIS MACHINE with Crontinental (`crontinental`) — once ("in 90 minutes", "at 7am tomorrow", "after the build") or recurring ("every weekday morning", "every 30 minutes", "nightly"). Use whenever work must happen after the current session ends, or on a repeat: "remind me to", "check back in an hour", "run this every morning", "retry that tonight", "keep polling until", "schedule a script", "set up a cron job", "crontab", "make this recurring", "run it on a timer". Also the way to notify the user from any session, job or not: "notify me", "ping my phone", "update me on my phone", "let me know when". This is NOT the `schedule` skill (cloud routines, which cannot run anything on this machine), NOT `/loop` and NOT CronCreate (both last only as long as the session). Covers the CLI, how a job ends, schedule syntax, what happens when the machine sleeps, and reading a job's output, and `crontinental notify`.
+description: Schedule a command to run later ON THIS MACHINE with Crontinental (`crontinental`) — once ("in 90 minutes", "at 7am tomorrow", "after the build") or recurring ("every weekday morning", "every 30 minutes", "nightly"). Use whenever work must happen after the current session ends, or on a repeat: "remind me to", "check back in an hour", "run this every morning", "retry that tonight", "keep polling until", "schedule a script", "set up a cron job", "crontab", "make this recurring", "run it on a timer". Also the way to notify the user from any session, job or not: "notify me", "let me know when". This is NOT the `schedule` skill (cloud routines, which cannot run anything on this machine), NOT `/loop` and NOT CronCreate (both last only as long as the session). Covers the CLI, how a job ends, schedule syntax, what happens when the machine sleeps, and reading a job's output, and `crontinental notify`.
 ---
 
 # Scheduling a command on this machine
@@ -149,8 +149,9 @@ minute; that is the tick.
 
 `crontinental notify` is not only for jobs. Any session or script can call it,
 and it rings the same hooks a job's report does (desktop, phone, whatever the
-user's `notify.d/` holds). When the user says "notify me", "ping my phone" or
-"let me know when X", this is the channel:
+user's `notify.d/` holds). When the user says "notify me" or "let me know when
+X", this is the channel. Whether it reaches a phone depends on those hooks
+(`show <name>` lists them):
 
 ```
 crontinental notify "red-team agent finished: 3 findings"
