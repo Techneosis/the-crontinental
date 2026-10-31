@@ -41,6 +41,7 @@ crontinental run <name>      fire it now, without moving its schedule
 crontinental edit <name> …   change it in place: --until, --until-done, --forever,
                              --every, --timeout, --notify, --tag, or a new command after --
 crontinental rm <name>       remove it
+crontinental upgrade [--check]   install the latest crontinental (--check: exit 3 if one is out)
 ```
 
 **Starting now.** `in 0` (or `at now`) runs a one-off straight away instead of

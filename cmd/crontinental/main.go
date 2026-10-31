@@ -65,6 +65,9 @@ type opts struct {
 	// notify
 	text, title string
 	urgent      bool
+
+	// upgrade
+	check bool
 }
 
 const usage = `usage: crontinental <verb> ...
@@ -96,6 +99,9 @@ verbs:
                       with its tags (a --tag here adds to them, for this message)
   messages [-n N] [--json]   every notification sent, newest first (default 20;
                       kept 30 days), hooks or none
+  upgrade [--check]   install the latest release, through its installer;
+                      --check only says whether there is a newer one (exit 3
+                      if there is, 0 if not)
   path                print the ledger path
   version             which build this is
 
@@ -178,6 +184,7 @@ var verbFlags = map[string]map[string]flagSpec{
 	"names":    {"--enabled": {false, nil}, "--disabled": {false, nil}},
 	"notify":   {"--urgent": {false, nil}, "--title": {true, nil}, "--tag": {true, nil}},
 	"messages": {"--lines": {true, nil}, "--json": {false, nil}},
+	"upgrade":  {"--check": {false, nil}},
 }
 
 var editFlags = func() map[string]flagSpec {
@@ -235,7 +242,7 @@ func parse(argv []string) *opts {
 	o.verb = argv[0]
 	flags, ok := verbFlags[o.verb]
 	if !ok {
-		usageErr("", "invalid choice: %q (choose from in, at, every, list, show, edit, log, run, rm, enable, disable, prune, check, notify, messages, path)", o.verb)
+		usageErr("", "invalid choice: %q (choose from in, at, every, list, show, edit, log, run, rm, enable, disable, prune, check, notify, messages, upgrade, path)", o.verb)
 	}
 
 	var pos []string
@@ -320,6 +327,7 @@ func parse(argv []string) *opts {
 	o.force = bools["--force"]
 	o.tags, o.noTags = lists["--tag"], lists["--no-tag"]
 	o.urgent, o.title = bools["--urgent"], set["--title"]
+	o.check = bools["--check"]
 	if o.enabled && o.disabled {
 		usageErr(o.verb, "argument --disabled: not allowed with argument --enabled")
 	}
@@ -398,6 +406,8 @@ func main() {
 		cmdMessages(o)
 	case "check":
 		cmdCheck(o)
+	case "upgrade":
+		cmdUpgrade(o)
 	case "path":
 		fmt.Println(dbPath())
 	}

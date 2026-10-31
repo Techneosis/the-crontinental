@@ -29,8 +29,11 @@ curl -fsSL https://raw.githubusercontent.com/Techneosis/the-crontinental/main/in
 That fetches the latest release for your machine, checks it against the
 release's SHA-256 sums, and installs it: the binary in `~/.local/bin`, tab
 completion, and the tick (a systemd user timer, or a LaunchAgent on macOS).
-Run it again to upgrade; your bookings carry over. Options go after
-`bash -s --`:
+To upgrade, `crontinental upgrade` (or run the one-liner again); your
+bookings carry over. `crontinental upgrade --check` only asks, and exits 3 when
+there is a newer release, so a booking can do the asking for you:
+`crontinental every weekly --name upgrade-check --forever -- crontinental
+upgrade --check` rings you when one is out. Options go after `bash -s --`:
 
 ```
 curl -fsSL …/install.sh | bash -s -- --claude          # also brief Claude Code, without asking
@@ -329,6 +332,7 @@ crontinental rm <name>         show them out now, mid-stay if need be
 crontinental prune             send the cleaners up early
 crontinental notify "…"        ring the Management, through the switchboard
 crontinental messages          the message book: every call, newest first
+crontinental upgrade           refit the hotel to the latest release (--check only asks)
 ```
 
 ---
