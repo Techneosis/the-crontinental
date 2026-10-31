@@ -73,7 +73,10 @@ and CI runs the whole suite on macOS. Cross-compile for a Mac with
 
 `calendar.go`, `timespan.go` and `when.go` are native, and `go test ./...`
 checks them against `systemd-analyze` and GNU `date` wherever those exist
-(they skip elsewhere; fixed-answer tests run everywhere). A grammar change keeps
+(they skip elsewhere; fixed-answer tests run everywhere). GNU `date` has no
+option for its base time, so the test pins its clock with a tiny LD_PRELOAD
+library it builds with `cc` (Linux only; on Linux CI a missing `cc` fails the
+test rather than skipping it). A grammar change keeps
 those differential tests passing. `CRONTINENTAL_FUZZ=100000 go test -run Random
 ./cmd/crontinental/` runs the random calendar comparison at full size (CI runs
 300); it tells systemd's own repeat bugs apart from ours by re-asking with the

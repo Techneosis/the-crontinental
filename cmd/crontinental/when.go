@@ -2,12 +2,25 @@ package main
 
 // Absolute times for `at` and `--until`, as a person types them. This is a
 // documented subset of what GNU `date -d` reads, and on Linux the tests check
-// it against `date -d`. Two deliberate differences:
+// it against `date -d` with GNU's clock pinned. The deliberate differences:
 //
 //   - Days, weeks, months and years keep the wall-clock time across a daylight
-//     saving change ("3 days" from 09:00 is 09:00). GNU keeps the UTC offset
-//     for a bare relative phrase instead. Hours, minutes and seconds are exact
-//     durations either way.
+//     saving change ("3 days" from 09:00 is 09:00), the way systemd's calendar
+//     does. Hours, minutes and seconds are elapsed time, added after the
+//     calendar part: "1 day 2 hours" from 09:00 is 11:00 tomorrow, whatever
+//     the clocks did overnight. GNU keeps now's UTC offset for a phrase with
+//     no clock, date or weekday in it, so its "1 day" is 24 hours (08:00 the
+//     morning after clocks go back) while its "tomorrow 09:00" is 09:00; we
+//     read both as 09:00. A delay that must be exact is `in 24h`.
+//   - A clock time the spring change skips is refused ("2027-03-14 02:30" in
+//     New York; systemd's calendar never fires it). GNU refuses it too, but
+//     checks the clock against today before adding days, so its
+//     "tomorrow 02:30" is refused on the day of the change and moved to 03:30
+//     the day before. A calendar unit with no clock that lands in the gap
+//     moves past it, as in GNU.
+//   - A clock time the autumn change repeats is the first of the two, as in
+//     systemd's calendar; GNU's pick depends on the zone. A clock taken from
+//     now ("now", "2 hours") stays on now's side of the change.
 //   - A date and a weekday together ("2026-09-15 friday") is refused; GNU
 //     silently ignores the weekday. And "+2" after a time is two of something,
 //     never a UTC offset.
@@ -355,11 +368,23 @@ func (p *whenParts) resolve(spec string, base time.Time) (time.Time, error) {
 	n := time.Date(y+p.relY, m+time.Month(p.relM), d+p.relD, 12, 0, 0, 0, time.UTC)
 	y, m, d = n.Date()
 	t, ok := wallTime(y, m, d, h, mi, s, p.loc)
+	if ok && !p.hasTime && !p.hasDate && !p.hasDow {
+		// The clock came from now. In the repeated hour, stay on now's side of
+		// the change: "now" at 01:30 EST is not 01:30 EDT, an hour ago.
+		_, off := b.Zone()
+		if c := time.Date(y, m, d, h, mi, s, 0, time.FixedZone("", off)); sameWall(c.In(p.loc), y, m, d, h, mi, s) {
+			t = c
+		}
+	}
 	if !ok {
 		if p.hasTime {
 			return time.Time{}, fmt.Errorf("%q doesn't exist: the clocks skip it", spec)
 		}
-		t = time.Date(y, m, d, h, mi, s, 0, p.loc) // a day landing in the skipped hour moves past it
+		// A day landing in the skipped hour moves past it, by the size of the
+		// gap: the clock read at the offset before the change. (time.Date
+		// leaves the choice unspecified, and in practice goes back.)
+		_, off := time.Date(y, m, d, h, mi, s, 0, p.loc).Add(-12 * time.Hour).Zone()
+		t = time.Date(y, m, d, h, mi, s, 0, time.FixedZone("", off))
 	}
 	return t.Add(time.Duration(p.relSec) * time.Second).UTC(), nil
 }

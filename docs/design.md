@@ -87,11 +87,26 @@ spec put it.
 `2026-09-15T09:00`, `9/15/2026`, `Oct 24 2026 10:00`, `24 Oct`, `07:00`,
 `7:30pm`, `7 pm`, `today`, `tomorrow 07:00`, `friday 18:00`, `next friday`,
 `last monday`, `3 days`, `2 hours ago`, `1 day 2 hours`, `fortnight`,
-`10:00 UTC`, `@<epoch>`, in any order. It is a subset of GNU `date -d`, with two
-deliberate differences: days, weeks, months and years keep the wall-clock time
-across a daylight-saving change (GNU keeps the UTC offset), and a date with a
-weekday ("2026-09-15 friday") is refused rather than silently dropping the
-weekday.
+`10:00 UTC`, `@<epoch>`, in any order. It is a subset of GNU `date -d`, and the
+tests hold it to `date -d` with GNU's clock pinned to moments on both sides of
+each daylight-saving change. The deliberate differences:
+
+- Days, weeks, months and years keep the wall-clock time across a
+  daylight-saving change, as systemd's calendar does: `tomorrow` and `1 day`
+  from 09:00 are both 09:00 tomorrow. Hours, minutes and seconds are elapsed
+  time, added after the calendar part, so `1 day 2 hours` is 11:00 tomorrow.
+  GNU keeps the UTC offset instead when the phrase has no clock in it, which
+  makes its `1 day` 08:00 the morning after the clocks go back while its
+  `tomorrow 09:00` is 09:00. An exact delay is `in 24h`: `in` takes a systemd
+  timespan, which is always elapsed time.
+- A clock time that the spring change skips (`2027-03-14 02:30` in New York) is
+  refused, rather than run at some other time; systemd's calendar never fires
+  it. A day with no clock that lands in the gap moves past it.
+- A clock time that the autumn change repeats is the first of the two, as in
+  systemd's calendar. A clock taken from now (`now`, `2 hours`) stays on now's
+  side of the change.
+- A date with a weekday (`2026-09-15 friday`) is refused rather than silently
+  dropping the weekday.
 
 `every` takes systemd's own calendar grammar, so it is the same grammar as
 every systemd timer. Crontinental parses it itself (one implementation on every

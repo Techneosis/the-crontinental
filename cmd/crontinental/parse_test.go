@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -220,13 +222,79 @@ func TestTimespanAgainstSystemd(t *testing.T) {
 	}
 }
 
-// The subset of `date -d` that `at` reads. Phrases relative to now are run
-// against the same second on both sides (retrying if the clock ticks in
-// between); phrases that GNU reads differently on purpose are in
-// TestWhenDeliberateDifferences instead.
-func TestWhenAgainstGNUDate(t *testing.T) {
+// whenBases are the moments the GNU comparison runs at: the calendar bases,
+// plus the mornings before each New York change, from which "1 day" lands on
+// the other side of it.
+var whenBases = append([]string{
+	"2026-10-31 13:00:00 UTC", // New York: 09:00 EDT, the day before falling back
+	"2026-10-31 06:30:00 UTC", // New York: 02:30 EDT; "1 day 2 hours" passes the repeated hour
+	"2027-03-13 14:00:00 UTC", // New York: 09:00 EST, the day before springing forward
+	"2027-03-13 07:30:00 UTC", // New York: 02:30 EST; "1 day" lands in the skipped hour
+}, bases...)
+
+// fakeNowSource is an LD_PRELOAD library that tells GNU date that now is
+// $FAKE_NOW (epoch seconds). date has no option for its base time, and a
+// comparison run against the real clock only meets a daylight-saving change on
+// the two days a year it happens to run near one.
+const fakeNowSource = `#define _GNU_SOURCE
+#include <stdlib.h>
+#include <time.h>
+#include <sys/time.h>
+static time_t fake(void) { const char *s = getenv("FAKE_NOW"); return s ? (time_t)atoll(s) : 0; }
+int clock_gettime(clockid_t c, struct timespec *ts) { (void)c; ts->tv_sec = fake(); ts->tv_nsec = 0; return 0; }
+int gettimeofday(struct timeval *tv, void *tz) { (void)tz; tv->tv_sec = fake(); tv->tv_usec = 0; return 0; }
+time_t time(time_t *t) { if (t) *t = fake(); return fake(); }
+`
+
+// gnuDateAt returns a function that runs `date -d spec` in zone with now
+// pinned to base, or why it can't be arranged here (no GNU date, no C
+// compiler, not Linux, or a date that ignores the library).
+func gnuDateAt(t *testing.T) (func(spec, zone string, base time.Time) (time.Time, error), string) {
+	t.Helper()
 	if out, err := exec.Command("date", "--version").Output(); err != nil || !strings.Contains(string(out), "GNU") {
-		t.Skip("GNU date not available here; the fixed-answer tests still run")
+		return nil, "GNU date not available here"
+	}
+	if runtime.GOOS != "linux" {
+		return nil, "pinning GNU date's clock needs LD_PRELOAD"
+	}
+	dir := t.TempDir()
+	src, lib := filepath.Join(dir, "fakenow.c"), filepath.Join(dir, "fakenow.so")
+	if err := os.WriteFile(src, []byte(fakeNowSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("cc", "-shared", "-fPIC", "-o", lib, src).CombinedOutput(); err != nil {
+		return nil, fmt.Sprintf("no C compiler to pin GNU date's clock (%v: %s)", err, out)
+	}
+	run := func(spec, zone string, base time.Time) (time.Time, error) {
+		cmd := exec.Command("date", "-d", spec, "+%s")
+		cmd.Env = append(os.Environ(), "TZ="+zone, "LC_ALL=C", "LD_PRELOAD="+lib,
+			"FAKE_NOW="+strconv.FormatInt(base.Unix(), 10))
+		out, err := cmd.Output()
+		if err != nil {
+			return time.Time{}, err
+		}
+		secs, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+		return time.Unix(secs, 0), err
+	}
+	probe := time.Date(2001, 2, 3, 4, 5, 6, 0, time.UTC)
+	if got, err := run("now", "UTC", probe); err != nil || !got.Equal(probe) {
+		return nil, fmt.Sprintf("GNU date ignored the pinned clock (got %v, %v)", got, err)
+	}
+	return run, ""
+}
+
+// The subset of `date -d` that `at` reads, against GNU date with its clock
+// pinned to each of whenBases, so the answer doesn't depend on today's date.
+// The one deliberate difference that shows up here, a calendar unit across a
+// daylight-saving change, is allowed only where GNU's answer is exactly its
+// own rule (gnuKeepsOffset); TestWhenAcrossDST pins our answers for it.
+func TestWhenAgainstGNUDate(t *testing.T) {
+	gnu, why := gnuDateAt(t)
+	if gnu == nil && runtime.GOOS == "linux" && os.Getenv("CI") != "" {
+		t.Fatal(why + ": Linux CI is where this comparison runs, so it must not skip there")
+	}
+	if gnu == nil {
+		t.Skip(why + "; the fixed-answer tests still run")
 	}
 	corpus := []string{"now", "today", "tomorrow", "yesterday", "07:00", "7:00", "7am", "7pm",
 		"7:30pm", "12am", "12pm", "19:00:30", "tomorrow 07:00", "07:00 tomorrow", "friday",
@@ -248,56 +316,65 @@ func TestWhenAgainstGNUDate(t *testing.T) {
 		"1.5 hours", "ago", "friday friday", "2027-03-14 02:30", "garbage"}
 	// +14 and -11 keep a zone on a different date from UTC at every hour, so a
 	// date taken from the wrong zone fails here whenever the test runs.
-	zones := []string{"America/New_York", "UTC", "Asia/Kolkata", "Pacific/Kiritimati", "Pacific/Pago_Pago"}
+	// Berlin and New York change on different dates, both inside whenBases.
+	zones := []string{"America/New_York", "Europe/Berlin", "UTC", "Asia/Kolkata", "Pacific/Kiritimati", "Pacific/Pago_Pago"}
 	for _, zone := range zones {
 		loc, _ := time.LoadLocation(zone)
-		for _, s := range corpus {
-			for attempt := 0; ; attempt++ {
-				base := time.Now().Truncate(time.Second)
-				cmd := exec.Command("date", "-d", s, "+%s")
-				cmd.Env = append(os.Environ(), "TZ="+zone, "LC_ALL=C")
-				out, err := cmd.Output()
-				if time.Now().Truncate(time.Second) != base && attempt < 3 {
-					continue // the second ticked over between the two readings
-				}
+		for _, bs := range whenBases {
+			base, _ := time.Parse("2006-01-02 15:04:05 MST", bs)
+			for _, s := range corpus {
+				want, err := gnu(s, zone, base)
 				got, perr := parseWhenAt(s, base, loc)
-				if err != nil {
-					if perr == nil {
-						t.Errorf("%q TZ=%s: GNU refuses it, we read %s", s, zone, got.In(loc))
-					}
-				} else {
-					secs, _ := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
-					want := time.Unix(secs, 0)
-					if perr != nil {
-						t.Errorf("%q TZ=%s: GNU reads %s, we refuse: %v", s, zone, want.In(loc), perr)
-					} else if !got.Equal(want) && !(crossesDST(base, want, loc) && dayUnitsOnly(s)) {
-						t.Errorf("%q TZ=%s: GNU %s, we %s", s, zone, want.In(loc), got.In(loc))
+				label := fmt.Sprintf("%q TZ=%s now=%s", s, zone, base.In(loc).Format("2006-01-02 15:04:05 MST"))
+				switch {
+				case err != nil && perr == nil:
+					t.Errorf("%s: GNU refuses it, we read %s", label, got.In(loc))
+				case err != nil:
+				case perr != nil:
+					t.Errorf("%s: GNU reads %s, we refuse: %v", label, want.In(loc), perr)
+				case !got.Equal(want):
+					if alt, ok := gnuKeepsOffset(s, base, loc); !ok || !alt.Equal(want) {
+						t.Errorf("%s: GNU %s, we %s", label, want.In(loc), got.In(loc))
 					}
 				}
-				break
 			}
 		}
 	}
 }
 
-func crossesDST(a, b time.Time, loc *time.Location) bool {
-	_, oa := a.In(loc).Zone()
-	_, ob := b.In(loc).Zone()
-	return oa != ob
-}
-
-// dayUnitsOnly: a bare relative phrase in days or longer, which keeps the wall
-// clock here and the UTC offset in GNU.
-func dayUnitsOnly(s string) bool {
+// gnuKeepsOffset is GNU's reading where it differs from ours on purpose: a
+// phrase made only of relative items, at least one of them a day or longer
+// ("1 day", "tomorrow", "1 day 2 hours ago"). GNU adds the days keeping the
+// UTC offset now has, which is our reading in a zone fixed at that offset. A
+// clock, a date or a weekday in the phrase make GNU keep the wall clock, as we
+// always do, so those get no allowance. With UTC named ("3 days UTC") GNU
+// still moves the answer by the local change, which UTC itself doesn't have.
+func gnuKeepsOffset(s string, base time.Time, loc *time.Location) (time.Time, bool) {
+	calendar, utc := false, false
 	for _, f := range strings.Fields(strings.ToLower(s)) {
-		if u, ok := relUnits[f]; ok && (u == "s" || u == "min" || u == "h") {
-			return false
-		}
-		if clockRe.MatchString(f) || isoDateRe.MatchString(f) {
-			return false
+		switch u, unit := relUnits[f]; {
+		case f == "tomorrow" || f == "yesterday":
+			calendar = true
+		case unit:
+			calendar = calendar || (u != "s" && u != "min" && u != "h")
+		case f == "utc":
+			utc = true
+		case f == "now" || f == "today" || f == "ago" || f == "next" || f == "last" || f == "this" ||
+			intRe.MatchString(f):
+		default:
+			return time.Time{}, false
 		}
 	}
-	return true
+	if !calendar {
+		return time.Time{}, false
+	}
+	_, off := base.In(loc).Zone()
+	t, err := parseWhenAt(s, base, time.FixedZone("now", off))
+	if utc && err == nil {
+		_, then := t.In(loc).Zone()
+		t = t.Add(time.Duration(then-off) * time.Second)
+	}
+	return t, err == nil
 }
 
 func mustLoc(t *testing.T, name string) *time.Location {
@@ -450,5 +527,122 @@ func TestWhenDeliberateDifferences(t *testing.T) {
 	got, err := parseWhenAt("2026-10-31 05:00 +2 days", base, ny)
 	if want := at(t, ny, "2026-11-02 05:00:00"); err != nil || !got.Equal(want) {
 		t.Errorf("want %s, got %s (%v)", want, got.In(ny), err)
+	}
+}
+
+// Daylight-saving changes, pinned. These run everywhere and don't depend on
+// today's date. want is our answer ("" refuses); gnu is GNU date 9.11's
+// answer at the same moment where it differs ("refused" if it refuses), recorded for comparison and
+// re-checked against GNU itself wherever TestWhenAgainstGNUDate can run.
+//
+// The rules: a calendar unit (day, week, month, year, "tomorrow") keeps the
+// wall clock; hours, minutes and seconds are elapsed time, added after the
+// calendar part. A clock time the spring change skips is refused; one the
+// autumn change repeats is the first of the two, as in systemd's calendar,
+// unless the clock comes from now, which stays on now's side of the change.
+func TestWhenAcrossDST(t *testing.T) {
+	cases := []struct{ zone, base, spec, want, gnu string }{
+		// New York falls back at 02:00 EDT on 2026-11-01.
+		{"America/New_York", "2026-10-31 09:00:00 EDT", "1 day", "2026-11-01 09:00:00 EST", "2026-11-01 08:00:00 EST"},
+		{"America/New_York", "2026-10-31 09:00:00 EDT", "tomorrow", "2026-11-01 09:00:00 EST", "2026-11-01 08:00:00 EST"},
+		{"America/New_York", "2026-10-31 09:00:00 EDT", "1 week", "2026-11-07 09:00:00 EST", "2026-11-07 08:00:00 EST"},
+		{"America/New_York", "2026-10-31 09:00:00 EDT", "24 hours", "2026-11-01 08:00:00 EST", ""},
+		{"America/New_York", "2026-10-31 09:00:00 EDT", "1 day 2 hours", "2026-11-01 11:00:00 EST", "2026-11-01 10:00:00 EST"},
+		{"America/New_York", "2026-10-31 09:00:00 EDT", "1 day 2 hours ago", "2026-11-01 07:00:00 EST", "2026-11-01 06:00:00 EST"},
+		{"America/New_York", "2026-10-31 09:00:00 EDT", "tomorrow 09:00", "2026-11-01 09:00:00 EST", ""},
+		{"America/New_York", "2026-10-31 09:00:00 EDT", "sunday", "2026-11-01 00:00:00 EDT", ""},
+		{"America/New_York", "2026-10-31 09:00:00 EDT", "3 days UTC", "2026-11-03 04:00:00 EST", "2026-11-03 03:00:00 EST"},
+		// the shape CI met: the day lands past the repeated hour
+		{"America/New_York", "2026-10-31 02:30:00 EDT", "1 day 2 hours", "2026-11-01 04:30:00 EST", "2026-11-01 03:30:00 EST"},
+		{"America/New_York", "2026-10-31 02:30:00 EDT", "1 day 2 hours ago", "2026-11-01 01:30:00 EDT", "2026-11-01 00:30:00 EDT"},
+		// a day landing in the repeated hour takes the first pass
+		{"America/New_York", "2026-10-31 01:30:00 EDT", "1 day", "2026-11-01 01:30:00 EDT", ""},
+		// the repeated hour's second pass: now's clock stays on its side
+		{"America/New_York", "2026-11-01 01:30:00 EST", "now", "2026-11-01 01:30:00 EST", ""},
+		{"America/New_York", "2026-11-01 01:30:00 EST", "2 hours", "2026-11-01 03:30:00 EST", ""},
+		{"America/New_York", "2026-11-01 01:30:00 EST", "next hour", "2026-11-01 02:30:00 EST", ""},
+		{"America/New_York", "2026-11-01 01:30:00 EST", "1 hour ago", "2026-11-01 01:30:00 EDT", ""},
+		{"America/New_York", "2026-11-01 01:30:00 EST", "1 day ago", "2026-10-31 01:30:00 EDT", "2026-10-31 02:30:00 EDT"},
+		// a clock that is given, in the repeated hour: the first pass
+		{"America/New_York", "2026-11-01 01:50:00 EST", "01:30", "2026-11-01 01:30:00 EDT", ""},
+		{"America/New_York", "2026-10-31 12:00:00 EDT", "2026-11-01 01:30", "2026-11-01 01:30:00 EDT", ""},
+		{"America/New_York", "2026-10-31 12:00:00 EDT", "tomorrow 01:30", "2026-11-01 01:30:00 EDT", ""},
+
+		// New York springs forward at 02:00 EST on 2027-03-14.
+		{"America/New_York", "2027-03-13 09:00:00 EST", "1 day", "2027-03-14 09:00:00 EDT", "2027-03-14 10:00:00 EDT"},
+		{"America/New_York", "2027-03-13 09:00:00 EST", "24 hours", "2027-03-14 10:00:00 EDT", ""},
+		{"America/New_York", "2027-03-13 09:00:00 EST", "1 day 2 hours", "2027-03-14 11:00:00 EDT", "2027-03-14 12:00:00 EDT"},
+		{"America/New_York", "2027-03-13 09:00:00 EST", "1 day 2 hours ago", "2027-03-14 07:00:00 EDT", "2027-03-14 08:00:00 EDT"},
+		{"America/New_York", "2027-03-13 09:00:00 EST", "tomorrow 09:00", "2027-03-14 09:00:00 EDT", ""},
+		// a day landing in the skipped hour moves past it
+		{"America/New_York", "2027-03-13 02:30:00 EST", "1 day", "2027-03-14 03:30:00 EDT", ""},
+		{"America/New_York", "2027-03-13 02:30:00 EST", "1 day 2 hours", "2027-03-14 05:30:00 EDT", ""},
+		// a clock that is given, in the skipped hour: refused. GNU checks the
+		// clock against today before it adds the day, so it refuses
+		// "tomorrow 02:30" on the day of the change and moves it on the day
+		// before.
+		{"America/New_York", "2027-03-13 12:00:00 EST", "2027-03-14 02:30", "", ""},
+		{"America/New_York", "2027-03-14 00:10:00 EST", "02:30", "", ""},
+		{"America/New_York", "2027-03-13 12:00:00 EST", "tomorrow 02:30", "", "2027-03-14 03:30:00 EDT"},
+		{"America/New_York", "2027-03-13 12:00:00 EST", "02:30 tomorrow", "", "2027-03-14 03:30:00 EDT"},
+		{"America/New_York", "2027-03-14 00:10:00 EST", "tomorrow 02:30", "2027-03-15 02:30:00 EDT", "refused"},
+
+		// Berlin falls back at 03:00 CEST on 2026-10-25. GNU takes the
+		// second pass of this repeated hour, though the first of New York's.
+		{"Europe/Berlin", "2026-10-24 09:00:00 CEST", "1 day 2 hours", "2026-10-25 11:00:00 CET", "2026-10-25 10:00:00 CET"},
+		{"Europe/Berlin", "2026-10-24 09:00:00 CEST", "2026-10-25 02:30", "2026-10-25 02:30:00 CEST", "2026-10-25 02:30:00 CET"},
+
+		// Lord Howe springs forward half an hour at 02:00 on 2026-10-04.
+		{"Australia/Lord_Howe", "2026-10-03 02:15:00 +1030", "1 day", "2026-10-04 02:45:00 +1100", ""},
+		{"Australia/Lord_Howe", "2026-10-03 09:00:00 +1030", "1 day", "2026-10-04 09:00:00 +1100", "2026-10-04 09:30:00 +1100"},
+
+		// no daylight saving: a day is 24 hours
+		{"Asia/Kolkata", "2026-10-31 09:00:00 IST", "1 day", "2026-11-01 09:00:00 IST", ""},
+		{"Asia/Kolkata", "2026-10-31 09:00:00 IST", "1 day 2 hours", "2026-11-01 11:00:00 IST", ""},
+		{"Asia/Kolkata", "2026-10-31 09:00:00 IST", "1 day 2 hours ago", "2026-11-01 07:00:00 IST", ""},
+	}
+	gnu, _ := gnuDateAt(t)
+	read := func(loc *time.Location, s string) time.Time {
+		v, err := time.ParseInLocation("2006-01-02 15:04:05 MST", s, loc)
+		if err != nil { // a zone with no abbreviation ("+1030")
+			v, err = time.ParseInLocation("2006-01-02 15:04:05 -0700", s, loc)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	for _, c := range cases {
+		loc := mustLoc(t, c.zone)
+		base := read(loc, c.base)
+		label := fmt.Sprintf("%q TZ=%s now=%s", c.spec, c.zone, c.base)
+		got, err := parseWhenAt(c.spec, base, loc)
+		switch {
+		case c.want == "" && err == nil:
+			t.Errorf("%s: want refused, got %s", label, got.In(loc).Format(time.DateTime+" MST"))
+		case c.want != "" && err != nil:
+			t.Errorf("%s: want %s, refused: %v", label, c.want, err)
+		case c.want != "" && !got.Equal(read(loc, c.want)):
+			t.Errorf("%s: want %s, got %s", label, c.want, got.In(loc).Format(time.DateTime+" MST"))
+		}
+		gnuWant := c.want
+		if c.gnu == "refused" {
+			gnuWant = ""
+		} else if c.gnu != "" {
+			gnuWant = c.gnu
+			// where GNU differs by keeping now's offset, that rule alone accounts for it
+			if alt, ok := gnuKeepsOffset(c.spec, base, loc); ok && !alt.Equal(read(loc, c.gnu)) {
+				t.Errorf("%s: GNU's %s is not its offset rule, which gives %s", label, c.gnu, alt.In(loc).Format(time.DateTime+" MST"))
+			}
+		}
+		if gnu != nil {
+			g, gerr := gnu(c.spec, c.zone, base)
+			switch {
+			case gnuWant == "" && gerr == nil:
+				t.Errorf("%s: recorded GNU refusing, GNU reads %s", label, g.In(loc).Format(time.DateTime+" MST"))
+			case gnuWant != "" && (gerr != nil || !g.Equal(read(loc, gnuWant))):
+				t.Errorf("%s: recorded GNU %s, GNU gives %s (%v)", label, gnuWant, g.In(loc).Format(time.DateTime+" MST"), gerr)
+			}
+		}
 	}
 }
