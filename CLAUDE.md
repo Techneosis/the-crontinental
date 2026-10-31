@@ -41,6 +41,10 @@ Claude Code setup.
   Room Steward (`exec`), the Cleaners (the 3-day reap), the Rules. Every
   metaphor has to map to real behaviour; if the behaviour changes, so does the
   README. `docs/design.md` is the plain-language version.
+- **This repo is public.** Nothing machine-, person- or client-specific goes in
+  any file, commit message or PR: no home paths, private script names, client
+  names, hostnames or account names. A pointer that only matters on one machine
+  belongs in that machine's private config, not here.
 - **`agents/` is for everyone.** No machine names, people or private paths in
   the skill or the snippet. Change the snippet only in
   `agents/claude-md-snippet.md`; installed copies are rewritten from it.
