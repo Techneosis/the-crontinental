@@ -220,7 +220,12 @@ A job can also speak for itself: `crontinental notify [--urgent] [--title T]
 <text>` sends a `message` event to the same hooks. exec runs every command with
 `CRONTINENTAL_JOB` set, so a message from inside a run carries the job (its
 note, its log command, its tags, with any `--tag` on the message laid over
-them); from anywhere else the job is empty. A message goes out
+them); from anywhere else the job is empty. The command also gets
+`CRONTINENTAL_RUN` (its run id), `CRONTINENTAL_NEXT` (the job's next due time,
+which the tick advanced before dispatching; unset for a one-off, a finished
+repeat or a disabled job run by hand) and `CRONTINENTAL_UNTIL` (its `--until`,
+unset without one), the times in the ledger's ISO-8601 UTC. None of the four is
+inherited: a run started from inside another run gets its own or none. A message goes out
 whatever `--notify` says, since `--notify` governs only the end-of-run reports,
 and it never touches the run's outcome. No hooks is said on stderr but exits 0,
 so a script under `set -e` doesn't die of it.

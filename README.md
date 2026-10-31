@@ -302,7 +302,11 @@ through as that guest's, with their note, their logbook and their tags; a
 `--tag` on the call adds to those, for that call only. It goes through
 whatever `--notify` says, which governs only the reports at checkout:
 `--notify never` with a call of your own is a guest who is quiet about routine
-trouble and speaks up only when it matters. A call is a call, not a checkout,
+trouble and speaks up only when it matters. A guest also knows their own
+reservation: `CRONTINENTAL_NEXT` is when they are next due (already moved on by
+the Concierge; unset if they won't be back) and `CRONTINENTAL_UNTIL` when their
+checkout terms end (unset with no deadline), both ISO-8601, so a stay can tell
+someone when to expect its next report without stating its schedule twice. A call is a call, not a checkout,
 so it never changes how the stay is written down. From outside the building
 (any script, any agent) the same line rings the same extensions, under no
 guest's name.

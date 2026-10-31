@@ -169,6 +169,11 @@ with keys the user's hooks read. Outside a job the message goes under no job's
 name, so give it a `--title` when the text alone wouldn't say where it came
 from.
 
+Inside a job, the command also has `CRONTINENTAL_NEXT` (when it is next due,
+ISO-8601; unset if it won't run again) and `CRONTINENTAL_UNTIL` (when its
+schedule ends; unset with no deadline). Read those rather than repeating the
+schedule in the command when a job reports when it will check in next.
+
 Every notification is also kept in the ledger for 30 days: `crontinental
 messages` lists them, newest first. When the user asks what they were told, or
 missed a notification, read it there.
