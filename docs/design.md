@@ -210,6 +210,18 @@ whatever `--notify` says, since `--notify` governs only the end-of-run reports,
 and it never touches the run's outcome. No hooks is said on stderr but exits 0,
 so a script under `set -e` doesn't die of it.
 
+Every event is also written to the ledger's `message` table (schema v4) before
+the hooks run, whether or not there are any: the message book. A notification
+is only as durable as the device that showed it, and a toast that timed out or
+a phone push that arrived while its app was open is otherwise gone.
+`crontinental messages [-n N] [--json]` reads it back, newest first. Each row
+has an id, which hooks get as `CRONTINENTAL_MESSAGE` (and `id` in the JSON),
+so a device can tie its notification to the record, and the run it came from
+(`CRONTINENTAL_RUN`, `run`): exec's own for an end-of-run report, and for a
+`notify` inside a run the one exec put in its environment. A ledger that can't
+be written costs the record, never the notification. The tick deletes entries
+after 30 days.
+
 A run has exactly one ending. On Linux a stop (`RuntimeMaxSec`, `rm`) signals
 `exec` and the command together, so the signal handler and the command's exit
 race to record it; a lock lets the first one write it down and notify, and a

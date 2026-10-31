@@ -9,7 +9,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 const schema = `
 CREATE TABLE IF NOT EXISTS job (
@@ -51,6 +51,24 @@ CREATE TABLE IF NOT EXISTS run (
   detail      TEXT
 );
 CREATE INDEX IF NOT EXISTS run_job ON run(job_id, id DESC);
+` + messageSchema
+
+// messageSchema is the message book: every notification, written down before
+// the hooks hear it. Its own constant so notify can make sure of it on a
+// ledger nothing else has opened yet. A v3 ledger gains it the same way (v4 is
+// only this table).
+const messageSchema = `
+CREATE TABLE IF NOT EXISTS message (
+  id        INTEGER PRIMARY KEY,
+  at        TEXT NOT NULL,                 -- ISO-8601 UTC
+  event     TEXT NOT NULL,                 -- fail|killed|error|unstartable|done|ok|message
+  job       TEXT,                          -- NULL for a message from outside any job
+  run_id    INTEGER,                       -- the run it is about, or was sent from
+  urgency   TEXT NOT NULL,                 -- critical|low
+  headline  TEXT NOT NULL,
+  body      TEXT NOT NULL,
+  tags      TEXT                           -- JSON object, as the hooks got it
+);
 `
 
 // Always name the columns. A ledger migrated from v1 has the lifecycle columns

@@ -265,6 +265,8 @@ wants it whole, as JSON on stdin:
 | `CRONTINENTAL_HEADLINE`, `_BODY` | the message, ready to show |
 | `CRONTINENTAL_LOG`, `_NOTE`, `_HOST` | how to read the logbook, the booking's note, this machine |
 | `CRONTINENTAL_TAG_<KEY>` | one for each of the booking's tags (below) |
+| `CRONTINENTAL_MESSAGE` | the call's number in the message book (below) |
+| `CRONTINENTAL_RUN` | the stay it is about, or was made from, when there is one |
 
 **Instructions for the operator.** A booking can carry its own word for the
 switchboard: `--tag topic=ops`, as many as it likes, each a name and a value.
@@ -302,6 +304,13 @@ so it never changes how the stay is written down. From outside the building
 (any script, any agent) the same line rings the same extensions, under no
 guest's name.
 
+**The message book.** The desk writes every call down before the switchboard
+rings it, extensions or none, so a call nobody picked up is never lost: the
+Management can read back what was said with `crontinental messages` (newest
+first; `--json` for a device that wants to show them). Each entry keeps the
+call's number, which is handed to the extensions as `CRONTINENTAL_MESSAGE`, so
+whatever rang can be matched to the page later. The book keeps a month.
+
 ---
 
 ## At the Front Desk
@@ -319,6 +328,7 @@ crontinental enable <name>     release it; a checked-out regular can be re-booke
 crontinental rm <name>         show them out now, mid-stay if need be
 crontinental prune             send the cleaners up early
 crontinental notify "…"        ring the Management, through the switchboard
+crontinental messages          the message book: every call, newest first
 ```
 
 ---
