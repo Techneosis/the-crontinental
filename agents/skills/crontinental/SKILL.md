@@ -118,8 +118,11 @@ minute; that is the tick.
 - **Node through mise shims can die unattended.** If the login shell puts
   mise's shims ahead of nvm and mise has no global node, a job calling `node`
   or `npx` fails with "No version is set for shim" yet works when tested by
-  hand. Fix it inside the job (put the node it needs first on PATH), not by
-  setting a global default the user didn't ask for.
+  hand. On Brett's machine this is fixed at the config level — don't patch PATH
+  in the job: a stowed mise drop-in (`~/.config/mise/conf.d/node-nvm.toml`, from
+  the dotfiles `mise/` package) makes mise's global node nvm's default, read
+  live by `techneosis-nvm-default-node`. If it recurs, check that symlink and
+  that script's output.
 - **Output goes to the job's log, not the database.** `crontinental log
   <name>` is how to read what a job printed. Don't add a redirect of your own.
 - **Every job has a 1-hour timeout** unless `--timeout` says otherwise; the kill
