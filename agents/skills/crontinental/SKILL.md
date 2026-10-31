@@ -92,7 +92,8 @@ they don't hurt.
 
 `in` takes a timespan (`90m`, `2h`, `1d`). `at` takes a date and time
 (`"tomorrow 07:00"`, `"2026-09-15 09:00"`, `"next friday 18:00"`, `"3 days"`,
-`"7pm"`, `"Oct 24 10:00"`).
+`"7pm"`, `"Oct 24 10:00"`). Across a daylight-saving change, `at "1 day"` and
+`at tomorrow` keep the clock time; `in 1d` is exactly 24 hours.
 
 `every` takes systemd's calendar grammar or a plain interval:
 

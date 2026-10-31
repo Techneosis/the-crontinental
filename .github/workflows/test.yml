@@ -3,6 +3,8 @@ on: [push, pull_request]
 jobs:
   test:
     strategy:
+      # one platform failing shouldn't cancel the other's answer
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
