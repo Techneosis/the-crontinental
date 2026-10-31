@@ -335,6 +335,26 @@ from finishing: a disabled job is kept until someone removes it.
 `prune [--days N]` deletes finished jobs now instead of waiting.
 `rm <name>` stops a running instance and deletes the job.
 
+## Upgrading
+
+`upgrade` doesn't download anything itself. It runs the `install.sh` that came
+in the same release (beside `build/crontinental`, which `~/.local/bin` links
+to), piped on stdin the way the one-liner pipes it, so the installer takes its
+download path: fetch the latest archive, check its SHA-256, unpack, swap
+`dist/current`, re-run. There is one way to install a release, not two.
+
+Knowing whether to bother is the only new part. Each release publishes a
+`VERSION` asset beside its archives, so the latest is one small fetch from
+`<releases>/latest/download/VERSION`, which is the same path on GitHub and in a
+`file://` copy (`CRONTINENTAL_RELEASES`, as for the installer). curl fetches it,
+as it does for the installer; the binary carries no HTTP stack for one request.
+
+`upgrade --check` exits 0 when there is nothing newer, 3 when there is, and 1
+when it couldn't find out, so a scheduled check reports a newer release as a
+failure and the notify hooks hear about it. A binary built from a checkout is
+refused (pull and re-run `./install.sh` there); a development build's `--check`
+names the latest release without comparing.
+
 ## Files
 
 - `cmd/crontinental/`: the whole thing, in Go; one static binary

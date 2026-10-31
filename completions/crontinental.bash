@@ -17,7 +17,7 @@ _crontinental() {
 
     verb=${COMP_WORDS[1]}
     if ((COMP_CWORD == 1)); then
-        COMPREPLY=($(compgen -W "in at every list show edit log run rm enable disable prune check notify messages path" -- "$cur"))
+        COMPREPLY=($(compgen -W "in at every list show edit log run rm enable disable prune check notify messages upgrade path" -- "$cur"))
         return
     fi
 
@@ -36,6 +36,7 @@ _crontinental() {
         prune) COMPREPLY=($(compgen -W '--days' -- "$cur")) ;;
         notify) COMPREPLY=($(compgen -W $'--urgent\n--title\n--tag' -- "$cur")) ;;
         messages) COMPREPLY=($(compgen -W $'-n\n--json' -- "$cur")) ;;
+        upgrade) COMPREPLY=($(compgen -W '--check' -- "$cur")) ;;
         log)
             if [[ $cur == -* ]]; then
                 COMPREPLY=($(compgen -W $'--lines\n--follow\n--run' -- "$cur"))

@@ -66,7 +66,7 @@ jobs:
       - name: the conformance suite, against the released binary
         run: CRONTINENTAL_BIN="$RUNNER_TEMP/crontinental-${{ matrix.platform }}/build/crontinental" python -m unittest discover -v tests
       # The one-liner, end to end, from these archives: download, checksum,
-      # unpack, install (LaunchAgent and all), book a job, uninstall.
+      # unpack, install (LaunchAgent and all), book a job, upgrade, uninstall.
       - name: install the way a user does (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -79,6 +79,18 @@ jobs:
           ~/.local/bin/crontinental in 2h --name release-smoke -- true
           ~/.local/bin/crontinental list | grep -q release-smoke
           ~/.local/bin/crontinental rm release-smoke
+          # upgrade: nothing newer, then a VERSION that says there is, which
+          # takes the installer's whole download path again
+          ~/.local/bin/crontinental upgrade --check
+          ~/.local/bin/crontinental upgrade | grep -q "already up to date"
+          echo v99.0.0 > "$RUNNER_TEMP/releases/latest/download/VERSION"
+          rc=0; ~/.local/bin/crontinental upgrade --check || rc=$?; test "$rc" -eq 3
+          ~/.local/bin/crontinental upgrade | tee "$RUNNER_TEMP/upgrade.log"
+          test "${PIPESTATUS[0]}" -eq 0
+          grep -q "upgrading from $VERSION to v99.0.0" "$RUNNER_TEMP/upgrade.log"
+          grep -q "checksum ok" "$RUNNER_TEMP/upgrade.log"
+          ~/.local/bin/crontinental version | grep -qF "$VERSION"
+          launchctl print "gui/$(id -u)/com.techneosis.crontinental" >/dev/null
           bash -s -- --uninstall < install.sh
           ! test -e ~/.local/bin/crontinental
 
