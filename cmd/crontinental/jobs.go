@@ -358,7 +358,28 @@ func cmdExec(o *opts) {
 	cmd.Dir = workdir
 	// The job's name, so a `crontinental notify` inside it speaks as the job.
 	// The run too, so its message names the run whose output it is about.
-	cmd.Env = append(os.Environ(), "CRONTINENTAL_JOB="+j.Name, fmt.Sprintf("CRONTINENTAL_RUN=%d", runID))
+	// And its times, so it can say when it will next report without stating
+	// its schedule twice: CRONTINENTAL_NEXT, when it is next due (the tick has
+	// already moved it on; unset if it won't come round again), and
+	// CRONTINENTAL_UNTIL, when the schedule ends (unset if it has no deadline).
+	// None of the four is inherited from a run that started this one.
+	var env []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		switch k {
+		case "CRONTINENTAL_JOB", "CRONTINENTAL_RUN", "CRONTINENTAL_NEXT", "CRONTINENTAL_UNTIL":
+		default:
+			env = append(env, kv)
+		}
+	}
+	env = append(env, "CRONTINENTAL_JOB="+j.Name, fmt.Sprintf("CRONTINENTAL_RUN=%d", runID))
+	if j.Enabled == 1 && j.NextRun.Valid {
+		env = append(env, "CRONTINENTAL_NEXT="+j.NextRun.String)
+	}
+	if j.Until.Valid {
+		env = append(env, "CRONTINENTAL_UNTIL="+j.Until.String)
+	}
+	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, os.Stdout, os.Stderr
 	// Its own process group, so a stop or a timeout reaches everything the
 	// command started, not just the shell.

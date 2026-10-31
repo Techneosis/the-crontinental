@@ -167,6 +167,33 @@ class Stays(Ledger):
         self.assertEqual(self.job("ok")[0], 1)
         self.assertEqual(self.job("bad")[0], 1)
 
+    def stay_env(self, name, env=None):
+        out = Path(self.tmp.name) / f"{name}.env"
+        self.sql("UPDATE job SET command=? WHERE name=?",
+                 f"env | grep ^CRONTINENTAL_ > {shlex.quote(str(out))}", name)
+        subprocess.run([BIN, "exec", name], env=env or self.env, capture_output=True)
+        return dict(l.split("=", 1) for l in out.read_text().splitlines())
+
+    def test_a_stay_knows_when_it_is_next_due_and_when_it_ends(self):
+        self.cli("every", "1h", "--name", "u", "--until", "3 days", "--", "true")
+        (nxt, until), = self.sql("SELECT next_run, until FROM job WHERE name='u'")
+        env = self.stay_env("u")
+        self.assertEqual((env["CRONTINENTAL_NEXT"], env["CRONTINENTAL_UNTIL"]), (nxt, until))
+
+    def test_no_end_and_no_next_are_left_unset(self):
+        self.cli("every", "1h", "--name", "f", "--forever", "--", "true")
+        env = self.stay_env("f")
+        self.assertIn("CRONTINENTAL_NEXT", env)
+        self.assertNotIn("CRONTINENTAL_UNTIL", env)
+        # a held job won't come round again; run by hand, it has no next
+        self.cli("disable", "f")
+        self.assertNotIn("CRONTINENTAL_NEXT", self.stay_env("f"))
+
+    def test_a_stay_started_from_inside_another_does_not_inherit_its_times(self):
+        self.cli("every", "1h", "--name", "inner", "--forever", "--", "true")
+        env = self.stay_env("inner", {**self.env, "CRONTINENTAL_UNTIL": "2000-01-01T00:00:00+00:00"})
+        self.assertNotIn("CRONTINENTAL_UNTIL", env)
+
 
 class Checkout(Ledger):
     def test_deadline_finishes_a_due_job_without_running_it(self):
