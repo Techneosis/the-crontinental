@@ -216,6 +216,19 @@ any inherited `CRONTINENTAL_TAG_*` removed, so it sees exactly this event's
 tags. An agent's edit that only changes tags, like `--note` and `--notify`, is
 not refused by the guard below.
 
+Messages can be marked seen (`seen ID... | --through ID | --all [--by WHO]`,
+schema v5: `seen_at` and `seen_by` on the message book, NULL until then). The
+first mark wins, so the record says which device got there first; marking again,
+or marking a message the tick already forgot, is a no-op, not an error. Only
+the newly marked are announced, in one call to each executable in
+`~/.config/crontinental/seen.d/` (`CRONTINENTAL_SEEN_DIR`; beside notify.d by
+default), with `CRONTINENTAL_EVENT=seen`, the ids in `CRONTINENTAL_MESSAGES`,
+`CRONTINENTAL_SEEN_BY`, and `{seen_at, seen_by, messages: [...]}` on stdin. One
+call, not one per message, because "I read the list" can be fifty at once and a
+hook may push to a phone. A directory of its own rather than a new event on
+notify.d: a hook written before `seen` existed would post "seen" as a
+notification.
+
 A job can also speak for itself: `crontinental notify [--urgent] [--title T]
 <text>` sends a `message` event to the same hooks. exec runs every command with
 `CRONTINENTAL_JOB` set, so a message from inside a run carries the job (its

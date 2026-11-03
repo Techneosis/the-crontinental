@@ -62,9 +62,12 @@ type opts struct {
 	due               string
 	late              int64
 
-	// notify
+	// notify, messages, seen
 	text, title string
 	urgent      bool
+	unseen      bool
+	ids         []string
+	through     int64
 
 	// upgrade
 	check bool
@@ -97,8 +100,10 @@ verbs:
   notify [--urgent] [--title T] [--tag K=V] <text>   tell the notify hooks
                       something, now; inside a job it is sent as that job's,
                       with its tags (a --tag here adds to them, for this message)
-  messages [-n N] [--json]   every notification sent, newest first (default 20;
-                      kept 30 days), hooks or none
+  messages [-n N] [--json] [--unseen]   every notification sent, newest first
+                      (default 20; kept 30 days), hooks or none; * is unseen
+  seen ID... | --through ID | --all  [--by WHO]   mark messages seen (the first
+                      mark is kept); the seen.d hooks hear of the newly seen
   upgrade [--check]   install the latest release, through its installer;
                       --check only says whether there is a newer one (exit 3
                       if there is, 0 if not)
@@ -186,7 +191,8 @@ var verbFlags = map[string]map[string]flagSpec{
 	"exec":     {"--due": {true, nil}, "--late": {true, nil}},
 	"names":    {"--enabled": {false, nil}, "--disabled": {false, nil}},
 	"notify":   {"--urgent": {false, nil}, "--title": {true, nil}, "--tag": {true, nil}},
-	"messages": {"--lines": {true, nil}, "--json": {false, nil}},
+	"messages": {"--lines": {true, nil}, "--json": {false, nil}, "--unseen": {false, nil}},
+	"seen":     {"--through": {true, nil}, "--all": {false, nil}, "--by": {true, nil}},
 	"upgrade":  {"--check": {false, nil}},
 }
 
@@ -245,7 +251,7 @@ func parse(argv []string) *opts {
 	o.verb = argv[0]
 	flags, ok := verbFlags[o.verb]
 	if !ok {
-		usageErr("", "invalid choice: %q (choose from in, at, every, list, show, edit, log, run, rm, enable, disable, prune, check, notify, messages, upgrade, path)", o.verb)
+		usageErr("", "invalid choice: %q (choose from in, at, every, list, show, edit, log, run, rm, enable, disable, prune, check, notify, messages, seen, upgrade, path)", o.verb)
 	}
 
 	var pos []string
@@ -295,6 +301,9 @@ func parse(argv []string) *opts {
 		set[key] = val
 	}
 
+	if o.verb == "seen" { // any number of message ids
+		o.ids, pos = pos, nil
+	}
 	want := verbArgs[o.verb]
 	if len(pos) < len(want) {
 		usageErr(o.verb, "the following arguments are required: %s", strings.Join(want[len(pos):], ", "))
@@ -330,6 +339,8 @@ func parse(argv []string) *opts {
 	o.force = bools["--force"]
 	o.tags, o.noTags = lists["--tag"], lists["--no-tag"]
 	o.urgent, o.title = bools["--urgent"], set["--title"]
+	o.unseen = bools["--unseen"]
+	o.through = int64(intFlag(o.verb, set, "--through", 0))
 	o.check = bools["--check"]
 	if o.enabled && o.disabled {
 		usageErr(o.verb, "argument --disabled: not allowed with argument --enabled")
@@ -407,6 +418,8 @@ func main() {
 		cmdNotify(o)
 	case "messages":
 		cmdMessages(o)
+	case "seen":
+		cmdSeen(o)
 	case "check":
 		cmdCheck(o)
 	case "upgrade":

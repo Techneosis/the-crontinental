@@ -318,6 +318,19 @@ first; `--json` for a device that wants to show them). Each entry keeps the
 call's number, which is handed to the extensions as `CRONTINENTAL_MESSAGE`, so
 whatever rang can be matched to the page later. The book keeps a month.
 
+**Taking a message.** A call rings on every extension at once, a desk phone and
+a pocket one, and whoever picks it up should be able to say so for everyone:
+`crontinental seen 42 --by phone` ticks it off in the book (`--through 42` for
+"I've read down to here", `--all` for the lot; the first tick stands, with who
+made it and when). `messages --unseen` is what nobody has picked up yet, and a
+`*` marks it in the plain listing. The newly ticked are announced on a second
+switchboard, `~/.config/crontinental/seen.d/`, in one call: their numbers as
+`CRONTINENTAL_MESSAGES` (space-separated), who ticked them as
+`CRONTINENTAL_SEEN_BY`, and the entries as JSON, so each device can take down
+its own copy of a call someone already answered. It is a separate switchboard on
+purpose: an extension wired before this existed never hears "seen" and rings it
+as a new call.
+
 ---
 
 ## At the Front Desk
@@ -335,7 +348,8 @@ crontinental enable <name>     release it; a checked-out regular can be re-booke
 crontinental rm <name>         show them out now, mid-stay if need be
 crontinental prune             send the cleaners up early
 crontinental notify "…"        ring the Management, through the switchboard
-crontinental messages          the message book: every call, newest first
+crontinental messages          the message book: every call, newest first (--unseen: not yet picked up)
+crontinental seen 42 --by phone   tick a call off for every device (--through ID, --all)
 crontinental upgrade           refit the hotel to the latest release (--check only asks)
 ```
 

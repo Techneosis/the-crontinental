@@ -629,6 +629,70 @@ class MessageBook(Notify):
         self.assertEqual([m["body"] for m in self.messages()], ["new"])
 
 
+class Seen(MessageBook):
+    """Any device can mark a message seen; the seen.d hooks tell the others."""
+
+    def setUp(self):
+        super().setUp()
+        self.seen_hooks = Path(self.tmp.name) / "seen.d"
+        self.seen_hooks.mkdir()
+        self.env["CRONTINENTAL_SEEN_DIR"] = str(self.seen_hooks)
+
+    def seen_recorder(self):
+        out = Path(self.tmp.name) / "seen.calls"
+        out.mkdir()
+        p = self.seen_hooks / "rec"
+        p.write_text(f'#!/bin/sh\nf="{out}/$$"; env | grep ^CRONTINENTAL_ > "$f.env"; cat > "$f.json"\n')
+        p.chmod(0o755)
+        return out
+
+    def send(self, n):
+        for i in range(n):
+            self.cli("notify", f"m{i + 1}")
+
+    def test_messages_start_unseen_and_the_first_mark_is_kept(self):
+        self.send(3)
+        self.assertEqual([(m["seen_at"], m["seen_by"]) for m in self.messages()], [(None, None)] * 3)
+        self.assertIn("marked 1 seen", self.cli("seen", "2", "--by", "phone").stdout)
+        self.assertIn("nothing new", self.cli("seen", "2", "--by", "desktop").stdout)
+        book = {m["id"]: m for m in self.messages()}
+        self.assertEqual(book[2]["seen_by"], "phone")
+        self.assertIsNotNone(book[2]["seen_at"])
+        self.assertEqual([m["id"] for m in self.messages("--unseen")], [3, 1])
+        self.assertIn("*", self.cli("messages").stdout.splitlines()[0], "an unseen message is marked")
+
+    def test_through_and_all(self):
+        self.send(4)
+        self.cli("seen", "--through", "2")
+        self.assertEqual([m["id"] for m in self.messages("--unseen")], [4, 3])
+        self.cli("seen", "--all")
+        self.assertEqual(self.messages("--unseen"), [])
+        self.assertIn("no unseen messages", self.cli("messages", "--unseen").stdout)
+
+    def test_seen_hooks_hear_only_the_newly_seen_in_one_call(self):
+        self.send(3)
+        self.cli("seen", "1")
+        out = self.seen_recorder()
+        self.cli("seen", "--through", "3", "--by", "desktop")
+        [(env, ev)] = self.calls(out)
+        self.assertEqual((env["CRONTINENTAL_EVENT"], env["CRONTINENTAL_MESSAGES"], env["CRONTINENTAL_SEEN_BY"]),
+                         ("seen", "2 3", "desktop"))
+        self.assertEqual([m["body"] for m in ev["messages"]], ["m2", "m3"])
+        self.assertEqual(ev["seen_by"], "desktop")
+        self.cli("seen", "--all")
+        self.assertEqual(len(self.calls(out)), 1, "nothing new: no call")
+
+    def test_notify_hooks_never_hear_of_seen(self):
+        self.send(1)
+        out = self.recorder()
+        self.cli("seen", "1")
+        self.assertEqual(self.calls(out), [])
+
+    def test_seen_needs_exactly_one_way_to_pick(self):
+        for args in ((), ("1", "--all"), ("--through", "2", "--all"), ("x",), ("0",)):
+            self.assertEqual(self.cli("seen", *args, ok=False).returncode, 2, args)
+
+
 class Migration(Ledger):
     def test_v1_ledger_is_migrated_without_stopping_anything(self):
         with sqlite3.connect(self.db) as c:
@@ -642,7 +706,7 @@ class Migration(Ledger):
             c.execute("INSERT INTO job (name, command, kind, next_run, enabled, timeout_sec, created_at)"
                       " VALUES ('fired','true','once',NULL,0,3600,?)", (ago(days=10),))
         self.cli("list")
-        self.assertEqual(self.sql("PRAGMA user_version"), [(4,)])
+        self.assertEqual(self.sql("PRAGMA user_version"), [(5,)])
         self.assertEqual(self.job("legacy")[3], 1, "open-ended repeats become --forever")
         self.assertEqual(self.job("ending")[3], 0, "a repeat with --until keeps its end")
         self.assertIsNotNone(self.job("fired")[2], "finished one-offs start the retention clock")
@@ -661,7 +725,7 @@ class Migration(Ledger):
                       " ('kept','true','repeat','1h',3600,?,1,3600,?)",
                       (ago(minutes=-30), ago(days=10)))
         self.assertIn("kept", self.cli("list").stdout)
-        self.assertEqual(self.sql("PRAGMA user_version"), [(4,)])
+        self.assertEqual(self.sql("PRAGMA user_version"), [(5,)])
         self.assertEqual(self.sql("SELECT tags FROM job WHERE name='kept'"), [(None,)])
         self.cli("edit", "kept", "--tag", "topic=ops")
         self.assertIn("topic=ops", self.cli("show", "kept").stdout)
@@ -674,9 +738,25 @@ class Migration(Ledger):
             c.execute("DROP TABLE message")
             c.execute("PRAGMA user_version=3")
         self.assertIn("no messages", self.cli("messages").stdout)
-        self.assertEqual(self.sql("PRAGMA user_version"), [(4,)])
+        self.assertEqual(self.sql("PRAGMA user_version"), [(5,)])
         self.cli("notify", "hello")
         self.assertEqual(self.sql("SELECT body FROM message"), [("hello",)])
+
+    def test_v4_ledger_gains_seen_and_keeps_its_messages(self):
+        self.cli("list")
+        with sqlite3.connect(self.db) as c:   # wind back to v4: the book without seen
+            c.execute("DROP TABLE message")
+            c.execute("CREATE TABLE message (id INTEGER PRIMARY KEY, at TEXT NOT NULL, event TEXT NOT NULL,"
+                      " job TEXT, run_id INTEGER, urgency TEXT NOT NULL, headline TEXT NOT NULL,"
+                      " body TEXT NOT NULL, tags TEXT)")
+            c.execute("INSERT INTO message (at, event, urgency, headline, body, tags)"
+                      " VALUES (?, 'message', 'low', 'Crontinental', 'before', '{}')", (ago(minutes=1),))
+            c.execute("PRAGMA user_version=4")
+        out = self.cli("messages", "--json").stdout
+        self.assertEqual([(m["body"], m["seen_at"]) for m in json.loads(out)], [("before", None)])
+        self.assertEqual(self.sql("PRAGMA user_version"), [(5,)])
+        self.cli("seen", "--all", "--by", "phone")
+        self.assertEqual(self.sql("SELECT body, seen_by FROM message"), [("before", "phone")])
 
 
 if __name__ == "__main__":
