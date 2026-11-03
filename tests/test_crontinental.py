@@ -743,10 +743,14 @@ class Migration(Ledger):
         self.assertEqual(self.sql("SELECT body FROM message"), [("hello",)])
 
     def test_v4_ledger_gains_seen_and_keeps_its_messages(self):
-        self.cli("notify", "before")
-        with sqlite3.connect(self.db) as c:   # wind back to v4: no seen columns
-            c.execute("ALTER TABLE message DROP COLUMN seen_at")
-            c.execute("ALTER TABLE message DROP COLUMN seen_by")
+        self.cli("list")
+        with sqlite3.connect(self.db) as c:   # wind back to v4: the book without seen
+            c.execute("DROP TABLE message")
+            c.execute("CREATE TABLE message (id INTEGER PRIMARY KEY, at TEXT NOT NULL, event TEXT NOT NULL,"
+                      " job TEXT, run_id INTEGER, urgency TEXT NOT NULL, headline TEXT NOT NULL,"
+                      " body TEXT NOT NULL, tags TEXT)")
+            c.execute("INSERT INTO message (at, event, urgency, headline, body, tags)"
+                      " VALUES (?, 'message', 'low', 'Crontinental', 'before', '{}')", (ago(minutes=1),))
             c.execute("PRAGMA user_version=4")
         out = self.cli("messages", "--json").stdout
         self.assertEqual([(m["body"], m["seen_at"]) for m in json.loads(out)], [("before", None)])
