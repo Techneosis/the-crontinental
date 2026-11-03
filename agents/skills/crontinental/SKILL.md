@@ -164,6 +164,12 @@ crontinental notify --title "Deploy" "v1.4.2 is live"
 crontinental notify --urgent "build failed, needs you"
 ```
 
+The message book (`crontinental messages [--unseen] [--json]`) keeps every
+notification for 30 days, with whether it was seen. `crontinental seen ID
+[--by WHO]` (or `--through ID`, `--all`) marks it so on every device whose
+hooks in `seen.d/` take their copies down. Mark one seen when the user has
+plainly dealt with it in the session, not on a guess.
+
 Save `--urgent` (critical) for things the user has to act on. Use `--tag` only
 with keys the user's hooks read. Outside a job the message goes under no job's
 name, so give it a `--title` when the text alone wouldn't say where it came

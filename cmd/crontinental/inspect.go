@@ -121,9 +121,14 @@ func listJSON(db *sql.DB, q string) {
 const runQuery = `SELECT id, due_at, started_at, finished_at, status, outcome, late_sec, detail
 	FROM run WHERE job_id=? ORDER BY id DESC`
 
+// querier is a ledger or a transaction on it.
+type querier interface {
+	Query(q string, args ...any) (*sql.Rows, error)
+}
+
 // rowsJSON turns each row into a JSON object with the columns in query order,
 // and returns each row's id column alongside (0 when there is none).
-func rowsJSON(db *sql.DB, q string, args ...any) ([]json.RawMessage, []int64) {
+func rowsJSON(db querier, q string, args ...any) ([]json.RawMessage, []int64) {
 	rows, err := db.Query(q, args...)
 	if err != nil {
 		die("ledger: %v", err)

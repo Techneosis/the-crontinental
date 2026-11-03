@@ -9,7 +9,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 4
+const schemaVersion = 5
 
 const schema = `
 CREATE TABLE IF NOT EXISTS job (
@@ -56,7 +56,7 @@ CREATE INDEX IF NOT EXISTS run_job ON run(job_id, id DESC);
 // messageSchema is the message book: every notification, written down before
 // the hooks hear it. Its own constant so notify can make sure of it on a
 // ledger nothing else has opened yet. A v3 ledger gains it the same way (v4 is
-// only this table).
+// only this table); a v4 one gains the seen columns in migrateV5.
 const messageSchema = `
 CREATE TABLE IF NOT EXISTS message (
   id        INTEGER PRIMARY KEY,
@@ -67,7 +67,9 @@ CREATE TABLE IF NOT EXISTS message (
   urgency   TEXT NOT NULL,                 -- critical|low
   headline  TEXT NOT NULL,
   body      TEXT NOT NULL,
-  tags      TEXT                           -- JSON object, as the hooks got it
+  tags      TEXT,                          -- JSON object, as the hooks got it
+  seen_at   TEXT,                          -- ISO-8601 UTC, when someone first marked it seen; NULL until then
+  seen_by   TEXT                           -- who did (seen --by), or NULL
 );
 `
 
@@ -151,6 +153,9 @@ func connect() *sql.DB {
 	if version < 3 {
 		migrateV3(db)
 	}
+	if version < 5 {
+		migrateV5(db)
+	}
 	if version < schemaVersion {
 		mustExec(db, fmt.Sprintf("PRAGMA user_version=%d", schemaVersion))
 	}
@@ -186,11 +191,24 @@ func migrateV3(db *sql.DB) {
 	}
 }
 
+// migrateV5 adds the seen columns to the message book. Every message already
+// in it is unseen, which NULL already says.
+func migrateV5(db *sql.DB) {
+	have := tableColumns(db, "message")
+	for _, c := range []string{"seen_at", "seen_by"} {
+		if !have[c] {
+			mustExec(db, "ALTER TABLE message ADD COLUMN "+c+" TEXT")
+		}
+	}
+}
+
 // jobColumns: the job table's columns as the ledger has them, which the
 // CREATE TABLE IF NOT EXISTS above leaves alone for an older ledger.
-func jobColumns(db *sql.DB) map[string]bool {
+func jobColumns(db *sql.DB) map[string]bool { return tableColumns(db, "job") }
+
+func tableColumns(db *sql.DB, table string) map[string]bool {
 	have := map[string]bool{}
-	rows, err := db.Query("PRAGMA table_info(job)")
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
 	if err != nil {
 		die("cannot read the ledger schema: %v", err)
 	}

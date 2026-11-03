@@ -49,11 +49,23 @@ func notifyDir() string {
 	return filepath.Join(cfg, "crontinental", "notify.d")
 }
 
+// seenDir holds the hooks told when messages are marked seen (`seen`), so a
+// device can take down its copy of a notification another device opened.
+// Separate from notify.d, so a hook written before `seen` existed is never
+// handed an event it would post as a notification.
+func seenDir() string {
+	if d := os.Getenv("CRONTINENTAL_SEEN_DIR"); d != "" {
+		return d
+	}
+	return filepath.Join(filepath.Dir(notifyDir()), "seen.d")
+}
+
 // hooks lists the executables in the notify directory, in name order. Dotfiles
 // and editor backups are skipped, and so is anything not executable, which is
 // how a hook is switched off without deleting it.
-func hooks() []string {
-	dir := notifyDir()
+func hooks() []string { return hooksIn(notifyDir()) }
+
+func hooksIn(dir string) []string {
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -235,8 +247,12 @@ func recordMessage(ev *event) {
 // cmdMessages reads the message book back, newest first.
 func cmdMessages(o *opts) {
 	db := connect()
-	q := `SELECT id, at, event, job, run_id AS run, urgency, headline, body, tags
-		FROM message ORDER BY id DESC LIMIT ?`
+	where := ""
+	if o.unseen {
+		where = "WHERE seen_at IS NULL "
+	}
+	q := `SELECT id, at, event, job, run_id AS run, urgency, headline, body, tags, seen_at, seen_by
+		FROM message ` + where + `ORDER BY id DESC LIMIT ?`
 	if o.json {
 		rows, _ := rowsJSON(db, q, o.lines)
 		printJSON(rows)
@@ -251,14 +267,19 @@ func cmdMessages(o *opts) {
 	for rows.Next() {
 		var id int64
 		var at, kind, urgency, headline, body string
-		var job, tags sql.NullString
+		var job, tags, seenAt, seenBy sql.NullString
 		var run sql.NullInt64
-		if err := rows.Scan(&id, &at, &kind, &job, &run, &urgency, &headline, &body, &tags); err != nil {
+		if err := rows.Scan(&id, &at, &kind, &job, &run, &urgency, &headline, &body, &tags, &seenAt, &seenBy); err != nil {
 			die("ledger: %v", err)
 		}
 		mark := " "
 		if urgency == "critical" {
 			mark = "!"
+		}
+		if !seenAt.Valid {
+			mark += "*"
+		} else {
+			mark += " "
 		}
 		who := job.String
 		if who == "" {
@@ -269,8 +290,109 @@ func cmdMessages(o *opts) {
 		n++
 	}
 	if n == 0 {
-		fmt.Println("no messages")
+		if o.unseen {
+			fmt.Println("no unseen messages")
+		} else {
+			fmt.Println("no messages")
+		}
 	}
+}
+
+// cmdSeen marks messages seen: by id, everything up to an id (--through, a
+// device's "I've read the list"), or everything (--all). The first mark wins,
+// so the record says who saw it first; marking a seen or reaped message again
+// is not an error. The seen.d hooks hear about the newly seen ones, all in one
+// call, so the other devices can take their copies down.
+func cmdSeen(o *opts) {
+	var ids []int64
+	for _, a := range o.ids {
+		n, err := strconv.ParseInt(a, 10, 64)
+		if err != nil || n <= 0 {
+			usageErr("seen", "not a message id: %q", a)
+		}
+		ids = append(ids, n)
+	}
+	picks := 0
+	if len(ids) > 0 {
+		picks++
+	}
+	if o.through > 0 {
+		picks++
+	}
+	if o.all {
+		picks++
+	}
+	if picks != 1 {
+		usageErr("seen", "name message ids, or --through ID, or --all (one of them)")
+	}
+	cond, args := "", []any{}
+	switch {
+	case o.all:
+		cond = "1"
+	case o.through > 0:
+		cond, args = "id<=?", []any{o.through}
+	default:
+		marks := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+		cond = "id IN (" + marks + ")"
+		for _, id := range ids {
+			args = append(args, id)
+		}
+	}
+
+	db := connect()
+	t := iso(now())
+	var by any
+	if o.by != "" {
+		by = o.by
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		die("ledger: %v", err)
+	}
+	q := `SELECT id, at, event, job, run_id AS run, urgency, headline, body, tags
+		FROM message WHERE seen_at IS NULL AND ` + cond + ` ORDER BY id`
+	rows, newly := rowsJSON(tx, q, args...)
+	if len(newly) > 0 {
+		if _, err := tx.Exec("UPDATE message SET seen_at=?, seen_by=? WHERE seen_at IS NULL AND "+cond,
+			append([]any{t, by}, args...)...); err != nil {
+			tx.Rollback()
+			die("ledger: %v", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		die("ledger: %v", err)
+	}
+	if len(newly) == 0 {
+		fmt.Println("nothing new to mark seen")
+		return
+	}
+	fmt.Printf("marked %d seen\n", len(newly))
+
+	hs := hooksIn(seenDir())
+	if len(hs) == 0 {
+		return
+	}
+	payload, _ := json.Marshal(struct {
+		SeenAt   string            `json:"seen_at"`
+		SeenBy   string            `json:"seen_by"`
+		Messages []json.RawMessage `json:"messages"`
+	}{t, o.by, rows})
+	strs := make([]string, len(newly))
+	for i, id := range newly {
+		strs[i] = strconv.FormatInt(id, 10)
+	}
+	host, _ := os.Hostname()
+	env := append(hookEnviron(), "CRONTINENTAL_EVENT=seen", "CRONTINENTAL_MESSAGES="+strings.Join(strs, " "),
+		"CRONTINENTAL_SEEN_BY="+o.by, "CRONTINENTAL_SEEN_AT="+t, "CRONTINENTAL_HOST="+host)
+	var wg sync.WaitGroup
+	for _, h := range hs {
+		wg.Add(1)
+		go func(h string) {
+			defer wg.Done()
+			runHook(h, env, payload)
+		}(h)
+	}
+	wg.Wait()
 }
 
 func runHook(path string, env []string, payload []byte) {
