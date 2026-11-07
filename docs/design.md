@@ -45,7 +45,12 @@ The tick never *runs* a job. It reads the table, finds what is due, and launches
 each one as `crontinental-job-<name>.service`, then returns — measured at
 ~44ms. That is what buys per-job cgroups, per-job journal streams, and per-job
 timeouts without a single per-job file, and what guarantees one wedged job can
-neither delay the tick nor starve another job.
+neither delay the tick nor starve another job. The one thing it does after
+dispatching is look in on runs still marked running (see Reading what
+happened): a process check each, capped at 3s, and, for any it finds lost, the
+hooks, all at once, capped at 10s. So a round with nothing running stays at
+milliseconds, and one that finds lost runs costs seconds, never a due job's
+start.
 
 ## The command
 
@@ -272,7 +277,8 @@ so a device can tie its notification to the record, and the run it came from
 be written costs the record, never the notification. The tick deletes entries
 after 30 days.
 
-A run has exactly one ending. On Linux a stop (`RuntimeMaxSec`, `rm`) signals
+A run has exactly one ending (a `lost` one is the tick's, below under
+Reading what happened). On Linux a stop (`RuntimeMaxSec`, `rm`) signals
 `exec` and the command together, so the signal handler and the command's exit
 race to record it; a lock lets the first one write it down and notify, and a
 command that died of SIGTERM in a stopped unit counts as `killed` either way.
@@ -288,6 +294,82 @@ crontinental log <name> --run ID   one run's output alone (ids from show --json)
 crontinental run <name>    fire it now WITHOUT moving its schedule
 crontinental edit <name>   change it in place (see below)
 ```
+
+`list --json` and `show --json` add `state`, one word for what the job is
+doing, and `running`, the run in progress (`{run, started_at, elapsed_sec}`,
+or null):
+
+| state | when |
+|---|---|
+| `running` | the last run that started is still marked running, and the platform agrees it is alive |
+| `paused` | disabled and not finished |
+| `failed` | the last run that started ended `fail`, `killed`, `error` or `lost`, or is marked running but is not alive |
+| `done` | finished, waiting to be deleted |
+| `scheduled` | anything else |
+
+in that order, so a run still going after `disable` reads `running`, and a
+finished job whose last run failed reads `failed`. Runs that never started
+(`skipped`, `overlap`) are passed over. Alive is asked of the platform, never
+taken from the ledger, because a run row stays `running` when its exec dies too
+hard to record an ending (a power cut, SIGKILL). Either way the answer is about
+*this* run, not the job: the unit's name and the lock file are the job's, shared
+by all its runs, so a process that began more than 5s after the run did is a
+later run's.
+
+- **Linux:** `systemctl --user show` on the job's unit, `ActiveState` and
+  `ActiveEnterTimestamp` (`--timestamp=unix`): alive while the unit is up and
+  became active no later than the run. When the user manager can't be asked,
+  the ledger is believed.
+- **macOS:** the exec pid on the first line of the job's lock file, through
+  `ps -o etime=,args=`: alive while its command line is `… exec <name> --due …`
+  (as dispatch starts it; the binary's own name and path aren't relied on) and
+  it began no later than the run. Only `ps` exiting 1 (no such process) counts
+  as dead; any other failure is no answer, and the ledger is believed. macOS
+  reads the file rather than trying the lock, since a probe that held it for a
+  moment would turn away a run starting at that moment as an overlap. The file
+  is rewritten in place, so only its first line is read (by `rm` too).
+
+Every check is capped at 3s, and no answer believes the ledger: the job reads
+`running`, and `--json` adds `"check": "timed out"` (no answer in time) or
+`"check": "unavailable"` (the user manager or `ps` couldn't be asked), so a
+reader can show that the platform isn't answering; with an answer there is no
+`check`. (On Linux a systemd without `--timestamp=unix` is asked again
+without it, and judged by the unit's state alone.) `list` and `show` only read,
+and the plain `list` marks a run that is gone but not yet written down `LOST`,
+and a run in progress behind a failed dispatch `running`, as `--json` reads
+them. `list --json` asks for up to eight jobs side by side, so its wait is the
+slowest answer, not the sum.
+
+The tick writes it down. Each round, after it has dispatched what was due, a
+run still marked `running` that started
+more than a minute ago is asked after the same way, and one whose exec is gone,
+or that has a later run of the same job behind it (which could not have started
+while it held the job; an `overlap`, `skipped` or `error` doesn't count), becomes
+`lost`: `finished_at` the round's time, no status, detail "its run died without
+finishing". It is closed once (the update is conditional on still being
+`running`), reported as a `lost` event, critical, unless `--notify never`, with
+`CRONTINENTAL_RUN` set to that run, and `show` gives it no duration, since its
+end is not known. (`CRONTINENTAL_LOST_GRACE_SEC` shortens the grace, for the tests.) The minute's
+grace is a margin, not the guard: exec takes its
+lock before it writes the run row, and on Linux writes it from inside the run's
+own unit. Each process check is capped at 3s; one that doesn't answer is no
+answer, and the ledger is believed (the run stays `running`). The lost runs are
+reported together (at most eight events ringing at once), each in the message
+book before its hooks ring; a tick stopped mid-ring loses the push for that
+run, not its record, so a power
+cut that leaves many costs one hook timeout, not one each. If the exec was
+alive after all and finishes later, its own ending overwrites `lost`, its
+end-of-run report goes out as usual, and the `lost` message is marked seen by
+"crontinental: the run finished after all", so the `seen.d` hooks take it down
+on every device: the truth wins over the tick's guess, and the guess is
+withdrawn. The round's checks run up to eight at once, within 15s in all; a run
+not asked after in time is asked after next round.
+`list`'s mark shows the last run that started when a `skipped` or `overlap`
+comes after trouble, so a lost run isn't covered up by the skip a power cut
+with `catchup=skip` leaves behind it. `crontinental exec` is the run's own
+process, not for running by hand: on Linux one outside its unit is taken for
+lost after the minute's grace. No schema change: `outcome` is text, and `lost` is one more
+value of it.
 
 A job's output is never captured into the database — it streams to the journal
 under the job's own unit, so `log` has exactly one source of truth and a chatty

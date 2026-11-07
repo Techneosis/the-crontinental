@@ -11,7 +11,9 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -114,12 +116,16 @@ func guardRun(name string) (runGuard, bool) {
 	return g, true
 }
 
+// write replaces the file's contents. It writes first and trims after, so a
+// reader never finds it empty: what it says only ever grows ("pid", then
+// "pid pgid").
 func (g runGuard) write(s string) {
 	if g.f == nil {
 		return
 	}
-	_ = g.f.Truncate(0)
-	_, _ = g.f.WriteAt([]byte(s+"\n"), 0)
+	b := []byte(s + "\n")
+	_, _ = g.f.WriteAt(b, 0)
+	_ = g.f.Truncate(int64(len(b)))
 }
 
 // started records the command's process group beside exec's own pid.
@@ -172,11 +178,10 @@ func stopRun(name string) {
 		return // nothing holds it: no run in progress
 	}
 	data, _ := io.ReadAll(f)
-	ids := strings.Fields(string(data))
-	if len(ids) == 0 {
+	execPid, pgid := parseLock(data)
+	if execPid == 0 {
 		return
 	}
-	execPid, _ := strconv.Atoi(ids[0])
 	if execPid > 0 {
 		_ = syscall.Kill(execPid, syscall.SIGTERM)
 	}
@@ -187,10 +192,8 @@ func stopRun(name string) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if len(ids) > 1 {
-		if pgid, _ := strconv.Atoi(ids[1]); pgid > 0 {
-			_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		}
+	if pgid > 0 {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	}
 	if execPid > 0 {
 		_ = syscall.Kill(execPid, syscall.SIGKILL)
@@ -297,4 +300,39 @@ func showLog(name string, lines int, follow bool) {
 		f.Close()
 		off += n
 	}
+}
+
+// runAlive says whether a run the ledger records as running is really in
+// progress: the exec named in its lock file is alive, is this job's exec, and
+// began no later than the run (the file outlives its run, so the pid may since
+// have gone to another process, or to the next run's exec). It reads the file
+// rather than trying the lock, because a probe that held the lock for even a
+// moment would make a run starting at that moment refuse itself as an overlap.
+// Only ps saying the pid is gone (exit 1) counts as dead: a ps that fails any
+// other way, or doesn't answer within aliveTimeout, is no answer, and the
+// ledger is believed.
+func runAlive(name string, started time.Time) (bool, string) {
+	data, err := os.ReadFile(lockPath(name))
+	if err != nil {
+		return false, ""
+	}
+	pid, _ := parseLock(data)
+	if pid == 0 {
+		return false, ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), aliveTimeout)
+	defer cancel()
+	// -ww: the whole command line, however wide; the match needs its end
+	out, err := exec.CommandContext(ctx, "ps", "-ww", "-o", "etime=,args=", "-p", strconv.Itoa(pid)).Output()
+	if ctx.Err() != nil {
+		return true, checkTimedOut
+	}
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 {
+			return false, "" // no such process
+		}
+		return true, checkUnavailable
+	}
+	return psSaysAlive(string(out), name, started, time.Now()), ""
 }

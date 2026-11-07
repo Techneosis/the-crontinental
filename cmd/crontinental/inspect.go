@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,9 +17,19 @@ type lastRun struct {
 	ok      bool
 }
 
+// lastOutcome is the job's latest run's outcome, for list's mark. A run that
+// never started (skipped, overlap) doesn't cover up trouble before it: a power
+// cut with catchup=skip leaves a lost run and then a skipped one.
 func lastOutcome(db *sql.DB, jobID int64) lastRun {
 	var o string
 	err := db.QueryRow("SELECT outcome FROM run WHERE job_id=? ORDER BY id DESC LIMIT 1", jobID).Scan(&o)
+	if err == nil && (o == "skipped" || o == "overlap") {
+		var before string
+		if db.QueryRow(`SELECT outcome FROM run WHERE job_id=? AND outcome NOT IN ('skipped','overlap')
+			ORDER BY id DESC LIMIT 1`, jobID).Scan(&before) == nil && badEndings[before] {
+			o = before
+		}
+	}
 	return lastRun{o, err == nil}
 }
 
@@ -60,7 +71,7 @@ func cmdList(o *opts) {
 		w = max(w, len([]rune(j.Name)))
 	}
 	marks := map[string]string{"ok": "ok", "done": "done", "fail": "FAIL", "killed": "KILLED",
-		"running": "running", "skipped": "skipped", "overlap": "overlap", "error": "ERROR"}
+		"running": "running", "skipped": "skipped", "overlap": "overlap", "error": "ERROR", "lost": "LOST"}
 	for _, j := range jobs {
 		lr := lastOutcome(db, j.ID)
 		state := ""
@@ -79,6 +90,17 @@ func cmdList(o *opts) {
 		mark := ""
 		if lr.ok {
 			mark = marks[lr.outcome]
+			// as --json reads it: a run the ledger has as running but whose
+			// process is gone is lost, before the tick has written it down
+			// and a run in progress behind a dispatch that failed is running
+			if lr.outcome == "running" || lr.outcome == "error" {
+				switch st, _, _ := jobState(db, j); {
+				case st == "running":
+					mark = marks["running"]
+				case lr.outcome == "running":
+					mark = marks["lost"]
+				}
+			}
 		}
 		kind := "once"
 		if j.Kind == "repeat" {
@@ -114,7 +136,95 @@ func listJSON(db *sql.DB, q string) {
 		}
 		jobs[i] = withKey(jobs[i], "last_run", last)
 	}
+	// Side by side, since each job with a run in progress asks the platform,
+	// so the slowest answer is the wait, not the sum of them.
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, 8)
+	for i := range jobs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			jobs[i] = withState(db, jobs[i], ids[i])
+		}(i)
+	}
+	wg.Wait()
 	printJSON(jobs)
+}
+
+// badEndings are the outcomes of a run that ended in trouble.
+var badEndings = map[string]bool{"fail": true, "killed": true, "error": true, "lost": true}
+
+// jobState is what a job is doing, as one word, and the run in progress if
+// there is one (nil otherwise):
+//
+//	running    a run is in progress, and the platform agrees it is alive
+//	paused     disabled, and not finished
+//	failed     its last run ended in trouble (lost included), or is still
+//	           marked running but its exec is gone and the tick hasn't yet
+//	           written it down as lost
+//	done       finished, waiting to be deleted
+//	scheduled  anything else: waiting for next_run
+//
+// Runs that never started (skipped, overlap) say nothing about health, so the
+// last run that did is the one that counts. A run in progress beats a pause:
+// disabling a job doesn't stop the run it already has.
+//
+// check is set when the platform gave no answer about a run in progress
+// (checkTimedOut, checkUnavailable), and the ledger was believed.
+func jobState(db *sql.DB, j *Job) (state string, run *runningRun, check string) {
+	// The run in progress, if there is one: the latest marked running with no
+	// later run behind it that started, the same rule the tick's findLost uses.
+	var runID int64
+	var started string
+	err := db.QueryRow(`SELECT r.id, r.started_at FROM run r WHERE r.job_id=? AND r.outcome='running'
+		AND NOT EXISTS (SELECT 1 FROM run n WHERE n.job_id=r.job_id AND n.id>r.id
+			AND n.outcome NOT IN ('overlap','skipped','error'))
+		ORDER BY r.id DESC LIMIT 1`, j.ID).Scan(&runID, &started)
+	if err == nil {
+		alive, check := runAlive(j.Name, parseISO(started))
+		if alive {
+			return "running", &runningRun{Run: runID, StartedAt: started,
+				ElapsedSec: int64(max(0, now().Sub(parseISO(started)).Seconds()))}, check
+		}
+		return "failed", nil, "" // gone, and not yet written down as lost
+	}
+	var last string
+	_ = db.QueryRow(`SELECT outcome FROM run WHERE job_id=? AND outcome NOT IN ('skipped','overlap','running')
+		ORDER BY id DESC LIMIT 1`, j.ID).Scan(&last)
+	switch {
+	case j.Enabled == 0 && !j.FinishedAt.Valid:
+		return "paused", nil, ""
+	case badEndings[last]:
+		return "failed", nil, ""
+	case j.FinishedAt.Valid:
+		return "done", nil, ""
+	}
+	return "scheduled", nil, ""
+}
+
+type runningRun struct {
+	Run        int64  `json:"run"`
+	StartedAt  string `json:"started_at"`
+	ElapsedSec int64  `json:"elapsed_sec"`
+}
+
+// withState adds state and running to a job's JSON.
+func withState(db *sql.DB, obj json.RawMessage, id int64) json.RawMessage {
+	j, err := scanJob(db.QueryRow("SELECT "+jobCols+" FROM job WHERE id=?", id))
+	if err != nil {
+		return obj
+	}
+	state, run, check := jobState(db, j)
+	sj, _ := json.Marshal(state)
+	rj, _ := json.Marshal(run) // null when nothing is running
+	obj = withKey(withKey(obj, "state", sj), "running", rj)
+	if check != "" { // the platform didn't answer; the ledger was believed
+		cj, _ := json.Marshal(check)
+		obj = withKey(obj, "check", cj)
+	}
+	return obj
 }
 
 // runQuery is a job's runs, newest first, as show --json and last_run give them.
@@ -200,7 +310,7 @@ func showJSON(db *sql.DB, j *Job) {
 	jobs, _ := rowsJSON(db, "SELECT * FROM job WHERE id=?", j.ID)
 	runs, _ := rowsJSON(db, runQuery+" LIMIT 20", j.ID)
 	rj, _ := json.Marshal(runs)
-	printJSON(withKey(jobs[0], "runs", rj))
+	printJSON(withKey(withState(db, jobs[0], j.ID), "runs", rj))
 }
 
 // cmdNames prints bare names, one per line -- what tab completion reads. Every
@@ -307,7 +417,8 @@ func cmdShow(o *opts) {
 			exit = "exit " + strconv.FormatInt(status.Int64, 10)
 		}
 		dur := ""
-		if started.Valid && finished.Valid {
+		// A lost run's finish is when the tick noticed, not when it stopped.
+		if started.Valid && finished.Valid && outcome != "lost" {
 			dur = fmt.Sprintf("%ds", int(parseISO(finished.String).Sub(parseISO(started.String)).Seconds()))
 		}
 		lateTxt := ""

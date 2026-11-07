@@ -34,6 +34,9 @@ crontinental in 0 --name rebuild -- make release           # now, detached, logg
 crontinental every 30m --now --name sync --forever -- ./sync   # once now, then every 30m
 
 crontinental list            what is scheduled, next run, last outcome
+                             (--json: also "state": running, paused, failed,
+                              done or scheduled, checked against the platform;
+                              a run whose process died unrecorded is "lost")
 crontinental show <name>     one job in full, with its last 10 runs
 crontinental log <name>      what it printed
 crontinental log <name> --run <id>   what one run printed (ids: show <name> --json)

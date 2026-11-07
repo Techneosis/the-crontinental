@@ -7,6 +7,7 @@ package main
 // systemd refusing a second unit of the same name is the overlap guard.
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -134,4 +135,27 @@ func runTool(name string, args ...string) (stdout, stderr []byte, err error) {
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err = cmd.Run()
 	return []byte(out.String()), []byte(errb.String()), err
+}
+
+// runAlive says whether a run the ledger records as running is really in
+// progress: its job's unit is up, and became active for this run rather than a
+// later one. It only asks; it never touches the unit. When the user manager
+// can't be asked, or doesn't answer within aliveTimeout, the ledger is
+// believed, and the second value says which.
+func runAlive(name string, started time.Time) (bool, string) {
+	ctx, cancel := context.WithTimeout(context.Background(), aliveTimeout)
+	defer cancel()
+	args := []string{"--user", "show", unitName(name), "-p", "ActiveState", "-p", "ActiveEnterTimestamp"}
+	out, err := exec.CommandContext(ctx, "systemctl", append(args, "--timestamp=unix")...).Output()
+	if err != nil && ctx.Err() == nil {
+		// an older systemd, without --timestamp: the state alone
+		out, err = exec.CommandContext(ctx, "systemctl", args...).Output()
+	}
+	if ctx.Err() != nil {
+		return true, checkTimedOut
+	}
+	if err != nil {
+		return true, checkUnavailable
+	}
+	return unitSaysAlive(string(out), started), ""
 }

@@ -91,7 +91,7 @@ func hooksIn(dir string) []string {
 // none (a run that never started has no exit status).
 type event struct {
 	ID       int64             `json:"id,omitempty"`  // in the message book; absent if it couldn't be written
-	Event    string            `json:"event"`         // fail, killed, error, unstartable, done, ok, message
+	Event    string            `json:"event"`         // fail, killed, error, unstartable, lost, done, ok, message
 	Job      string            `json:"job"`           // empty for a message sent from outside any job
 	Run      int64             `json:"run,omitempty"` // the run it is about, or was sent from
 	Status   *int              `json:"status,omitempty"`
@@ -112,8 +112,17 @@ func notify(j *Job, kind, headline, body string, critical bool, status, elapsed 
 	return notifyTagged(j, nil, kind, headline, body, critical, status, elapsed)
 }
 
+// notifyRun is notify about a run other than this process's own, for the tick.
+func notifyRun(j *Job, run int64, kind, headline, body string, critical bool, status, elapsed *int) int {
+	return notifyEvent(j, nil, run, kind, headline, body, critical, status, elapsed)
+}
+
 // notifyTagged is notify with extra tags laid over the job's, for one message.
 func notifyTagged(j *Job, extra map[string]string, kind, headline, body string, critical bool, status, elapsed *int) int {
+	return notifyEvent(j, extra, runOf(), kind, headline, body, critical, status, elapsed)
+}
+
+func notifyEvent(j *Job, extra map[string]string, run int64, kind, headline, body string, critical bool, status, elapsed *int) int {
 	if j == nil {
 		j = &Job{}
 	}
@@ -133,7 +142,7 @@ func notifyTagged(j *Job, extra map[string]string, kind, headline, body string, 
 		ev.Tags[k] = v
 	}
 	ev.Host, _ = os.Hostname()
-	ev.Run = runOf()
+	ev.Run = run
 	recordMessage(&ev)
 
 	hs := hooks()
@@ -347,10 +356,20 @@ func cmdSeen(o *opts) {
 	}
 
 	db := connect()
+	if n := markSeen(db, cond, args, o.by); n == 0 {
+		fmt.Println("nothing new to mark seen")
+	} else {
+		fmt.Printf("marked %d seen\n", n)
+	}
+}
+
+// markSeen marks the unseen messages matching cond seen by `by`, and tells the
+// seen.d hooks about the newly marked, in one call. It returns how many.
+func markSeen(db *sql.DB, cond string, args []any, byName string) int {
 	t := iso(now())
 	var by any
-	if o.by != "" {
-		by = o.by
+	if byName != "" {
+		by = byName
 	}
 	tx, err := db.Begin()
 	if err != nil {
@@ -370,27 +389,24 @@ func cmdSeen(o *opts) {
 		die("ledger: %v", err)
 	}
 	if len(newly) == 0 {
-		fmt.Println("nothing new to mark seen")
-		return
+		return 0
 	}
-	fmt.Printf("marked %d seen\n", len(newly))
-
 	hs := hooksIn(seenDir())
 	if len(hs) == 0 {
-		return
+		return len(newly)
 	}
 	payload, _ := json.Marshal(struct {
 		SeenAt   string            `json:"seen_at"`
 		SeenBy   string            `json:"seen_by"`
 		Messages []json.RawMessage `json:"messages"`
-	}{t, o.by, rows})
+	}{t, byName, rows})
 	strs := make([]string, len(newly))
 	for i, id := range newly {
 		strs[i] = strconv.FormatInt(id, 10)
 	}
 	host, _ := os.Hostname()
 	env := append(hookEnviron(), "CRONTINENTAL_EVENT=seen", "CRONTINENTAL_MESSAGES="+strings.Join(strs, " "),
-		"CRONTINENTAL_SEEN_BY="+o.by, "CRONTINENTAL_SEEN_AT="+t, "CRONTINENTAL_HOST="+host)
+		"CRONTINENTAL_SEEN_BY="+byName, "CRONTINENTAL_SEEN_AT="+t, "CRONTINENTAL_HOST="+host)
 	var wg sync.WaitGroup
 	for _, h := range hs {
 		wg.Add(1)
@@ -400,7 +416,12 @@ func cmdSeen(o *opts) {
 		}(h)
 	}
 	wg.Wait()
+	return len(newly)
 }
+
+// retractedBy is who marks a lost run's message seen when the run reports back
+// after all: the tick's guess was wrong, so every device can take it down.
+const retractedBy = "crontinental: the run finished after all"
 
 func runHook(path string, env []string, payload []byte) {
 	ctx, cancel := context.WithTimeout(context.Background(), hookTimeout)

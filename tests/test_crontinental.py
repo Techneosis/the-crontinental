@@ -13,6 +13,7 @@ import os
 import shlex
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -656,6 +657,127 @@ class Notify(Ledger):
         self.assertEqual(shown["name"], "j")
         self.assertEqual([r["outcome"] for r in shown["runs"]], ["fail", "ok"])
         self.assertEqual(json.loads(self.cli("show", "k", "--json").stdout)["runs"], [])
+
+    def states(self):
+        jobs = json.loads(self.cli("list", "--all", "--json").stdout)
+        return {j["name"]: (j["state"], j["running"]) for j in jobs}
+
+    def add_run(self, name, outcome, status=None):
+        self.sql("INSERT INTO run (job_id, started_at, finished_at, status, outcome)"
+                 " SELECT id, ?, ?, ?, ? FROM job WHERE name=?",
+                 ago(minutes=5), ago(minutes=4), status, outcome, name)
+
+    def test_json_says_what_each_job_is_doing(self):
+        self.cli("every", "1h", "--name", "waiting", "--forever", "--", "true")
+        self.cli("every", "1h", "--name", "held", "--forever", "--", "true")
+        self.cli("disable", "held")
+        self.cli("every", "1h", "--name", "broke", "--forever", "--notify", "never", "--", "exit 3")
+        self.cli("exec", "broke", ok=False)
+        self.cli("every", "1h", "--name", "finished", "--until-done", "--", "exit 99")
+        self.cli("exec", "finished")
+        self.assertEqual(self.states(), {"waiting": ("scheduled", None), "held": ("paused", None),
+                                         "broke": ("failed", None), "finished": ("done", None)})
+        shown = json.loads(self.cli("show", "broke", "--json").stdout)
+        self.assertEqual((shown["state"], shown["running"]), ("failed", None))
+
+    def test_a_good_run_clears_failed_and_runs_that_never_started_dont_count(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--", "true")
+        self.add_run("j", "killed", 143)
+        self.add_run("j", "overlap")
+        self.add_run("j", "skipped")
+        self.assertEqual(self.states()["j"][0], "failed")
+        self.add_run("j", "ok", 0)
+        self.add_run("j", "overlap")
+        self.assertEqual(self.states()["j"][0], "scheduled")
+
+    def stale_run(self, name, minutes=5):
+        self.sql("INSERT INTO run (job_id, started_at, outcome) SELECT id, ?, 'running'"
+                 " FROM job WHERE name=?", ago(minutes=minutes), name)
+
+    def test_a_run_left_running_behind_a_later_one_is_lost_once_and_reported(self):
+        out = self.recorder()
+        self.cli("every", "1h", "--name", "j", "--forever", "--", "true")
+        self.stale_run("j", minutes=10)
+        self.add_run("j", "ok", 0)  # a later run started, so the first one's exec is gone
+        self.cli("tick")
+        self.cli("tick")  # and only once
+        outcomes = self.sql("SELECT outcome, detail, finished_at IS NOT NULL FROM run ORDER BY id")
+        self.assertEqual(outcomes[0], ("lost", "its run died without finishing", 1))
+        [(env, ev)] = self.calls(out)
+        self.assertEqual((ev["event"], ev["job"], ev["urgency"]), ("lost", "j", "critical"))
+        [(first,)] = self.sql("SELECT id FROM run ORDER BY id LIMIT 1")
+        self.assertEqual(ev["run"], first)
+        lost_line, = [l for l in self.cli("show", "j").stdout.splitlines() if " lost " in l]
+        self.assertIn("its run died without finishing", lost_line)
+        self.assertNotRegex(lost_line, r"\d+s ")  # no duration: its end is unknown
+
+    def test_every_lost_run_is_reported_in_one_round(self):
+        out = self.recorder()
+        for name in ("a", "b", "c"):
+            self.cli("every", "1h", "--name", name, "--forever", "--", "true")
+            self.stale_run(name)
+            self.add_run(name, "ok", 0)
+        self.cli("tick")
+        self.assertEqual(sorted(ev["job"] for _, ev in self.calls(out)), ["a", "b", "c"])
+
+    def test_a_skipped_run_doesnt_cover_up_a_lost_one_in_list(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
+        self.add_run("j", "lost")
+        self.add_run("j", "skipped")  # a power cut, then catchup=skip
+        self.assertIn("LOST", self.cli("list").stdout)
+        self.assertEqual(self.states()["j"][0], "failed")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the user manager is Linux's")
+    def test_no_answer_from_the_platform_believes_the_ledger_and_says_so(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
+        self.stale_run("j")
+        env = {**self.env, "XDG_RUNTIME_DIR": "/nonexistent", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent"}
+        p = subprocess.run([BIN, "list", "--json"], env=env, capture_output=True, text=True)
+        job, = json.loads(p.stdout)
+        self.assertEqual((job["state"], job["check"]), ("running", "unavailable"))
+        self.assertEqual(job["running"]["run"], self.sql("SELECT id FROM run")[0][0])
+        subprocess.run([BIN, "tick"], env=env, capture_output=True, check=True)
+        self.assertEqual(self.sql("SELECT outcome FROM run"), [("running",)])  # not written off
+        # an answer leaves no check field
+        self.add_run("j", "ok", 0)
+        self.assertNotIn("check", json.loads(self.cli("list", "--json").stdout)[0])
+
+    def test_a_dead_run_behind_a_later_good_one_reads_by_the_later_one(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
+        self.stale_run("j")
+        self.add_run("j", "ok", 0)
+        self.assertEqual(self.states()["j"], ("scheduled", None))
+
+    def test_lost_with_notify_never_is_recorded_but_quiet(self):
+        out = self.recorder()
+        self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
+        self.stale_run("j")
+        self.add_run("j", "ok", 0)
+        self.cli("tick")
+        self.assertEqual(self.sql("SELECT outcome FROM run ORDER BY id LIMIT 1"), [("lost",)])
+        self.assertEqual(self.calls(out), [])
+
+    def test_a_lost_last_run_reads_failed(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
+        self.add_run("j", "lost")
+        self.assertEqual(self.states()["j"], ("failed", None))
+        self.assertIn("LOST", self.cli("list").stdout)
+
+    def test_a_run_behind_an_overlap_is_not_taken_for_lost(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
+        self.stale_run("j")
+        self.add_run("j", "overlap")  # refused because the first was still going
+        # inside the grace, so never asked after (an overlap behind an old one
+        # is test_runs' test_the_tick_leaves_a_live_run_alone)
+        self.sql("UPDATE run SET started_at=? WHERE outcome='running'", ago(seconds=10))
+        self.cli("tick")
+        self.assertEqual(self.sql("SELECT outcome FROM run ORDER BY id"), [("running",), ("overlap",)])
+
+    def test_a_finished_job_whose_last_run_failed_reads_failed(self):
+        self.cli("every", "1h", "--name", "j", "--until-done", "--", "true")
+        self.add_run("j", "fail", 1)
+        self.sql("UPDATE job SET enabled=0, next_run=NULL, finished_at=? WHERE name='j'", ago(minutes=1))
+        self.assertEqual(self.states()["j"][0], "failed")
 
     def test_log_run_needs_a_run_of_that_job(self):
         self.cli("every", "1h", "--name", "j", "--forever", "--", "true")
