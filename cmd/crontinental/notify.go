@@ -182,13 +182,19 @@ func cmdNotify(o *opts) {
 		die("nothing to say")
 	}
 	extra := parseTags(o.tags)
-	checkTagSet(extra)
 	var j *Job
 	if name := os.Getenv("CRONTINENTAL_JOB"); name != "" {
 		j = lookupJob(connect(), name)
 		if j == nil {
 			j = &Job{Name: name} // removed mid-run: still the job's word
 		}
+	}
+	if len(extra) > 0 { // the message's tags are the job's with these laid over
+		merged := jobTags(j)
+		for k, v := range extra {
+			merged[k] = v
+		}
+		checkTagSet(merged)
 	}
 	title := o.title
 	if title == "" {

@@ -284,11 +284,12 @@ labels, not a safe: they sit in the Ledger and the message book, in `show` and
 `list --json`, and in the environment of every stay and every extension, so
 never put a secret in one. Every stay carries them, so they are kept short: a
 value up to 1KiB of text, a booking's set up to 8KiB. A guest changed at the
-desk mid-stay keeps the tags they checked in with; the change is for the next
-stay.
+desk mid-stay keeps the tags they checked in with in their room's variables;
+the change is for the next stay. (A call rung from the room is the desk's,
+and carries the booking's tags as they are now.)
 
 ```
-crontinental every "Mon..Fri 02:00" --name backup --forever --tag ntfy_topic=ops -- restic backup ~/work
+crontinental every "Mon..Fri 02:00" --name backup --forever --tag ntfy_topic=ops --tag team=infra -- restic backup ~/work
 crontinental edit backup --tag ntfy_topic=pager --no-tag team
 ```
 

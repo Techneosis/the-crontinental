@@ -11,6 +11,7 @@ package main
 // message book, `show`, and every run's and hook's environment.
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -28,12 +29,29 @@ const tagEnvPrefix = "CRONTINENTAL_TAG_"
 
 // Every tag reaches every run's environment, where one variable can be no
 // longer than the kernel allows (128KiB on Linux) and the whole environment
-// shares one limit, so a job's tags are kept small: a value up to 1KiB, and
-// the set up to 8KiB as JSON.
+// shares one limit, so new tags are kept small: a value up to 1KiB, and the
+// set up to 8KiB as JSON. Those are checked at --tag only. What is already in
+// the ledger is passed on as it always was, short of a variable too long to
+// pass at all (maxTagVar).
 const (
 	maxTagValue = 1024
 	maxTagSet   = 8 * 1024
+	maxTagVar   = 64 * 1024
 )
+
+// tagsJSON is a set of tags as one JSON object, keys sorted, with <, > and &
+// left as they are: it is what CRONTINENTAL_TAGS holds and what the limit
+// measures, so "a&b" counts as three bytes, not thirteen.
+func tagsJSON(tags map[string]string) string {
+	if len(tags) == 0 {
+		return "{}"
+	}
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(tags) // map keys encode sorted
+	return strings.TrimSuffix(b.String(), "\n")
+}
 
 func checkTagKey(k string) string {
 	k = strings.ToLower(k)
@@ -64,9 +82,8 @@ func parseTags(flags []string) map[string]string {
 
 // checkTagSet refuses a set of tags too big for every run to carry.
 func checkTagSet(tags map[string]string) {
-	b, _ := json.Marshal(tags)
-	if len(b) > maxTagSet {
-		die("the tags come to %d bytes; a job's tags hold up to %d in all", len(b), maxTagSet)
+	if n := len(tagsJSON(tags)); n > maxTagSet {
+		die("the tags come to %d bytes; a job's tags hold up to %d in all", n, maxTagSet)
 	}
 }
 
@@ -75,8 +92,7 @@ func tagsValue(tags map[string]string) any {
 	if len(tags) == 0 {
 		return nil
 	}
-	b, _ := json.Marshal(tags) // map keys marshal sorted
-	return string(b)
+	return tagsJSON(tags)
 }
 
 // jobTags is a job's tags. A tags column that can't be read is said on stderr
@@ -89,6 +105,9 @@ func jobTags(j *Job) map[string]string {
 			fmt.Fprintf(os.Stderr, "crontinental: %s: its tags in the ledger are not readable (%v); going on without them\n", j.Name, err)
 			return map[string]string{}
 		}
+	}
+	if tags == nil { // a column holding JSON null
+		tags = map[string]string{}
 	}
 	return tags
 }
@@ -134,29 +153,31 @@ func hookEnviron() []string {
 // tagEnv is the tag variables for a set of tags: one CRONTINENTAL_TAG_<KEY>
 // each, and CRONTINENTAL_TAGS with all of them ({} for none). A hook gets its
 // event's; a run's command gets its job's.
-// Only the CLI checks what goes into the ledger, so a tag that would make a bad
-// variable (a key no shell can spell, a value with a NUL or that isn't text, or
-// one too big) is left out of both the variables and the set, and said on
-// stderr, which is the run's or the hook's log.
+// The limits are for new tags, so a tag booked before them reaches its hooks as
+// it always did. Only the CLI checks what goes into the ledger, though, so a
+// tag that can't be a variable at all (a key no shell can spell, a value with a
+// NUL, or one past maxTagVar) is left out, and said on stderr, which is the
+// run's or the hook's log. CRONTINENTAL_TAGS holds what was passed on, and is
+// left out on its own if it would be past maxTagVar.
 func tagEnv(tags map[string]string) []string {
 	good := map[string]string{}
 	for k, v := range tags {
-		if tagKey.MatchString(k) && utf8.ValidString(v) && !strings.ContainsRune(v, 0) && len(v) <= maxTagValue {
+		if tagKey.MatchString(k) && !strings.ContainsRune(v, 0) && len(v) <= maxTagVar {
 			good[k] = v
 		} else {
 			fmt.Fprintf(os.Stderr, "crontinental: tag %q can't be passed on as a variable; left out\n", k)
 		}
 	}
-	b, _ := json.Marshal(good) // map keys marshal sorted
-	if len(b) > maxTagSet {
-		fmt.Fprintf(os.Stderr, "crontinental: the tags come to %d bytes, over %d; none are passed on\n", len(b), maxTagSet)
-		good, b = map[string]string{}, []byte("{}")
-	}
 	var env []string
 	for _, k := range sortedTagKeys(good) {
 		env = append(env, tagEnvPrefix+strings.ToUpper(k)+"="+good[k])
 	}
-	return append(env, tagsEnvVar+"="+string(b))
+	if set := tagsJSON(good); len(set) <= maxTagVar {
+		env = append(env, tagsEnvVar+"="+set)
+	} else {
+		fmt.Fprintf(os.Stderr, "crontinental: the tags come to %d bytes; %s left out\n", len(set), tagsEnvVar)
+	}
+	return env
 }
 
 // rawTags is the ledger's tags column as JSON for `list --json`: an object, {}

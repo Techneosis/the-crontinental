@@ -170,9 +170,10 @@ class Stays(Ledger):
     def stay_env(self, name, env=None):
         out = Path(self.tmp.name) / f"{name}.env"
         self.sql("UPDATE job SET command=? WHERE name=?",
-                 f"env | grep ^CRONTINENTAL_ > {shlex.quote(str(out))}", name)
+                 f"env -0 > {shlex.quote(str(out))}", name)
         subprocess.run([BIN, "exec", name], env=env or self.env, capture_output=True)
-        return dict(l.split("=", 1) for l in out.read_text().splitlines())
+        pairs = (e.split("=", 1) for e in out.read_text().split("\0") if e.startswith("CRONTINENTAL_"))
+        return dict(pairs)
 
     def test_a_stay_knows_when_it_is_next_due_and_when_it_ends(self):
         self.cli("every", "1h", "--name", "u", "--until", "3 days", "--", "true")
@@ -219,11 +220,23 @@ class Stays(Ledger):
 
     def test_a_tag_that_cant_be_a_variable_is_left_out(self):
         self.cli("every", "1h", "--name", "t", "--forever", "--", "true")
+        # booked before the limits: still passed on, unless it can't be a variable
         self.sql("UPDATE job SET tags=? WHERE name='t'",
-                 json.dumps({"ok": "1", "bad key": "2", "big": "x" * 5000}))
+                 json.dumps({"ok": "1", "old": "x" * 5000, "multi": "a\nb", "bad key": "2",
+                             "huge": "y" * 70000}))
         env = self.stay_env("t")
-        self.assertEqual(json.loads(env["CRONTINENTAL_TAGS"]), {"ok": "1"})
-        self.assertEqual([k for k in env if k.startswith("CRONTINENTAL_TAG_")], ["CRONTINENTAL_TAG_OK"])
+        self.assertEqual(json.loads(env["CRONTINENTAL_TAGS"]), {"ok": "1", "old": "x" * 5000, "multi": "a\nb"})
+        self.assertEqual(sorted(k for k in env if k.startswith("CRONTINENTAL_TAG_")),
+                         ["CRONTINENTAL_TAG_MULTI", "CRONTINENTAL_TAG_OK", "CRONTINENTAL_TAG_OLD"])
+        self.assertEqual(env["CRONTINENTAL_TAG_MULTI"], "a\nb")
+
+    def test_a_null_tags_column_reads_as_none(self):
+        self.cli("every", "1h", "--name", "t", "--forever", "--", "true")
+        self.sql("UPDATE job SET tags='null' WHERE name='t'")
+        self.assertEqual(json.loads(self.stay_env("t")["CRONTINENTAL_TAGS"]), {})
+        self.cli("edit", "t", "--tag", "a=1")
+        [(tags,)] = self.sql("SELECT tags FROM job WHERE name='t'")
+        self.assertEqual(json.loads(tags), {"a": "1"})
 
     def test_a_stay_started_from_inside_another_does_not_inherit_its_tags(self):
         self.cli("every", "1h", "--name", "child", "--forever", "--tag", "own=1", "--", "true")
@@ -600,8 +613,15 @@ class Notify(Ledger):
                               "--tag", b"a=\xff\xfe", "--", "true"], env=self.env, capture_output=True)
         self.assertEqual(bad.returncode, 1)
         self.assertNotEqual(self.cli("notify", "--tag", f"a={too_long}", "hi", ok=False).returncode, 0)
+        # measured as written: & is one byte, not six
+        amps = [a for i in range(8) for a in ("--tag", f"k{i}={'&' * 1000}")]
+        self.cli("every", "1h", "--name", "amp", "--forever", *amps, "--", "true")
         self.cli("every", "1h", "--name", "j", "--forever", "--tag", "a=1", "--", "true")
         self.cli("edit", "j", *many[:-4])  # 8 of them, and a=1: just under
+        # a message inside a run is measured with its job's tags
+        p = subprocess.run([BIN, "notify", "--tag", f"more={'z' * 900}", "hi"],
+                           env={**self.env, "CRONTINENTAL_JOB": "j"}, capture_output=True, text=True)
+        self.assertIn("in all", p.stderr)
         p = self.cli("edit", "j", *many, ok=False)
         self.assertIn("in all", p.stderr)
 

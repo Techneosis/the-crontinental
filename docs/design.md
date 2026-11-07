@@ -209,8 +209,8 @@ event about the job hands them to every hook, as `CRONTINENTAL_TAG_<KEY>` and as
 a `tags` object in the JSON (`{}` for none), so one hook can route by job
 without a hook per job or a table of job names. Crontinental gives them no
 meaning. A key is letters, digits and `_`, starting with a letter, and stored
-lowercase, because it becomes part of a variable's name; a value is anything
-but empty. They live in one `tags` column as a JSON object (schema v3), so a
+lowercase, because it becomes part of a variable's name; a value is text
+(UTF-8, no NUL), not empty, up to 1KiB. They live in one `tags` column as a JSON object (schema v3), so a
 new tag is never a new column. A hook starts from its caller's environment with
 any inherited `CRONTINENTAL_TAG_*` removed, so it sees exactly this event's
 tags. Every hook also gets `CRONTINENTAL_TAGS`, the event's whole set as one
@@ -224,8 +224,11 @@ in every run's and hook's environment. A run's tags are a snapshot: an edit
 reaches the next run, not one already going. Because every tag rides in every
 run's environment, where the kernel limits a single variable (128KiB on Linux),
 a value holds up to 1KiB of text (UTF-8, no NUL) and a job's set up to 8KiB as
-JSON, refused at `--tag`; a tag in the ledger that breaks those rules anyway is
-left out of the variables, and a tags column that can't be read is taken as
+JSON (measured as written, `&` as one byte), refused at `--tag`, and for a
+`notify --tag` inside a run on the job's tags with the message's laid over. The
+limits are for new tags: a tag booked before them reaches the hooks as it did,
+and only one that cannot be a variable at all (a key no shell can spell, a NUL,
+past 64KiB) is left out. A tags column that can't be read is taken as
 none, with a line in the log, rather than stopping a run or the `edit` that
 would mend it. An agent's edit that changes tags is guarded like any other
 (below): they reach the job's command, so they change what its runs see.
