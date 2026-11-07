@@ -89,6 +89,13 @@ func cmdList(o *opts) {
 		mark := ""
 		if lr.ok {
 			mark = marks[lr.outcome]
+			// as --json reads it: a run the ledger has as running but whose
+			// process is gone is lost, before the tick has written it down
+			if lr.outcome == "running" {
+				if st, _ := jobState(db, j); st == "failed" {
+					mark = marks["lost"]
+				}
+			}
 		}
 		kind := "once"
 		if j.Kind == "repeat" {
@@ -155,7 +162,7 @@ func jobState(db *sql.DB, j *Job) (string, *runningRun) {
 			AND n.outcome NOT IN ('overlap','skipped','error'))
 		ORDER BY r.id DESC LIMIT 1`, j.ID).Scan(&runID, &started)
 	if err == nil {
-		if runAlive(j.Name) {
+		if runAlive(j.Name, parseISO(started)) {
 			return "running", &runningRun{Run: runID, StartedAt: started,
 				ElapsedSec: int64(max(0, now().Sub(parseISO(started)).Seconds()))}
 		}

@@ -122,8 +122,8 @@ each round they:
    suddenly to write anything), write the stay down as `lost` and tell the
    Management, once.
 
-The round takes a few dozen milliseconds. No single guest can hold up the
-Concierge, or the guest behind them: the look-in on occupied rooms, which can
+A round with nothing amiss takes a few dozen milliseconds. No single guest can
+hold up the Concierge, or the guest behind them: the look-in on occupied rooms, which can
 take a few seconds when there is bad news to telephone, comes after everyone
 due has been shown up.
 

@@ -751,7 +751,9 @@ class Notify(Ledger):
         self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
         self.stale_run("j")
         self.add_run("j", "overlap")  # refused because the first was still going
-        self.sql("UPDATE run SET started_at=? WHERE outcome='running'", ago(seconds=10))  # inside the grace
+        # inside the grace, so never asked after (an overlap behind an old one
+        # is test_runs' test_the_tick_leaves_a_live_run_alone)
+        self.sql("UPDATE run SET started_at=? WHERE outcome='running'", ago(seconds=10))
         self.cli("tick")
         self.assertEqual(self.sql("SELECT outcome FROM run ORDER BY id"), [("running",), ("overlap",)])
 

@@ -311,12 +311,29 @@ in that order, so a run still going after `disable` reads `running`, and a
 finished job whose last run failed reads `failed`. Runs that never started
 (`skipped`, `overlap`) are passed over. Alive is asked of the platform, never
 taken from the ledger, because a run row stays `running` when its exec dies too
-hard to record an ending (a power cut, SIGKILL): on Linux `systemctl --user
-is-active` on the run's unit (when the user manager can't be asked at all, the
-ledger is believed); on macOS the exec pid in the job's lock file, still alive
-and still that job's `exec`. macOS deliberately reads the file rather than
-trying the lock: a probe that held it for a moment would turn away a run
-starting at that moment as an overlap. `list` and `show` only read.
+hard to record an ending (a power cut, SIGKILL). Either way the answer is about
+*this* run, not the job: the unit's name and the lock file are the job's, shared
+by all its runs, so a process that began more than 5s after the run did is a
+later run's.
+
+- **Linux:** `systemctl --user show` on the job's unit, `ActiveState` and
+  `ActiveEnterTimestamp` (`--timestamp=unix`): alive while the unit is up and
+  became active no later than the run. When the user manager can't be asked,
+  the ledger is believed.
+- **macOS:** the exec pid on the first line of the job's lock file, through
+  `ps -o etime=,args=`: alive while its command line is `… exec <name> --due …`
+  (as dispatch starts it; the binary's own name and path aren't relied on) and
+  it began no later than the run. Only `ps` exiting 1 (no such process) counts
+  as dead; any other failure is no answer, and the ledger is believed. macOS
+  reads the file rather than trying the lock, since a probe that held it for a
+  moment would turn away a run starting at that moment as an overlap. The file
+  is rewritten in place, so only its first line is read (by `rm` too).
+
+Every check is capped at 3s, and no answer believes the ledger. `list` and
+`show` only read, and the plain `list` marks a run that is gone but not yet
+written down `LOST`, as `--json` calls it `failed`. They ask once per job whose
+latest run is marked running, one after another, so a `list --json` costs a
+process check per run in progress.
 
 The tick writes it down. Each round, after it has dispatched what was due, a
 run still marked `running` that started
@@ -327,11 +344,14 @@ while it held the job; an `overlap`, `skipped` or `error` doesn't count), become
 finishing". It is closed once (the update is conditional on still being
 `running`), reported as a `lost` event, critical, unless `--notify never`, with
 `CRONTINENTAL_RUN` set to that run, and `show` gives it no duration, since its
-end is not known. The minute's grace is a margin, not the guard: exec takes its
+end is not known. (`CRONTINENTAL_LOST_GRACE_SEC` shortens the grace, for the tests.) The minute's
+grace is a margin, not the guard: exec takes its
 lock before it writes the run row, and on Linux writes it from inside the run's
 own unit. Each process check is capped at 3s; one that doesn't answer is no
 answer, and the ledger is believed (the run stays `running`). The lost runs are
-reported together, each in the message book before its hooks ring, so a power
+reported together (at most eight events ringing at once), each in the message
+book before its hooks ring; a tick stopped mid-ring loses the push for that
+run, not its record, so a power
 cut that leaves many costs one hook timeout, not one each. If the exec was
 alive after all and finishes later, its own ending overwrites `lost`, and its
 end-of-run report goes out as usual: the truth wins over the tick's guess.

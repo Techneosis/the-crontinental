@@ -138,19 +138,17 @@ func runTool(name string, args ...string) (stdout, stderr []byte, err error) {
 }
 
 // runAlive says whether a run the ledger records as running is really in
-// progress: its unit is still up. It only asks; it never touches the unit.
-// When the user manager can't be asked at all, or doesn't answer within
-// aliveTimeout, the ledger is believed.
-func runAlive(name string) bool {
+// progress: its job's unit is up, and became active for this run rather than a
+// later one. It only asks; it never touches the unit. When the user manager
+// can't be asked at all, or doesn't answer within aliveTimeout, the ledger is
+// believed.
+func runAlive(name string, started time.Time) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), aliveTimeout)
 	defer cancel()
-	out, _ := exec.CommandContext(ctx, "systemctl", "--user", "is-active", unitName(name)).Output()
-	if ctx.Err() != nil {
+	out, err := exec.CommandContext(ctx, "systemctl", "--user", "show", unitName(name),
+		"-p", "ActiveState", "-p", "ActiveEnterTimestamp", "--timestamp=unix").Output()
+	if ctx.Err() != nil || err != nil {
 		return true
 	}
-	switch strings.TrimSpace(string(out)) {
-	case "inactive", "failed":
-		return false
-	}
-	return true
+	return unitSaysAlive(string(out), started)
 }

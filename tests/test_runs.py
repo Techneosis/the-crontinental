@@ -159,16 +159,40 @@ class Runs(unittest.TestCase):
         self.wait_for(name, 2)
         self.assertEqual(self.state(name)[0], "failed")  # the error is its last word, once the run ends
 
+    def test_a_dead_run_isnt_kept_alive_by_the_next_run_of_its_job(self):
+        # the next run is up, but hasn't written its own row yet: the job's unit
+        # (or lock) belongs to it, not to the old run
+        name = self.book("next", "sleep 4", "--forever")
+        with sqlite3.connect(self.db) as c:
+            c.execute("INSERT INTO run (job_id, started_at, outcome) SELECT id, ?, 'running' FROM job WHERE name=?",
+                      ((datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(timespec="seconds"), name))
+        self.cli("run", name)
+        self.wait_for_rows(name, 2)
+        with sqlite3.connect(self.db) as c:  # back to the moment before the new run wrote itself down
+            c.execute("DELETE FROM run WHERE id=(SELECT max(id) FROM run)")
+        self.assertEqual(self.state(name), ("failed", None))
+        self.cli("tick")
+        self.assertEqual(self.runs(name)[0][0], "lost")
+
+    def wait_for_rows(self, name, count, timeout=10):
+        deadline = time.time() + timeout
+        while time.time() < deadline and len(self.runs(name)) < count:
+            time.sleep(0.1)
+        self.assertGreaterEqual(len(self.runs(name)), count)
+
     def test_the_tick_leaves_a_live_run_alone(self):
         name = self.book("alive", "sleep 4", "--forever")
         self.cli("run", name)
         self.wait_running(name)
-        with sqlite3.connect(self.db) as c:  # as if it had been going a while
-            c.execute("UPDATE run SET started_at=? WHERE outcome='running'",
-                      ((datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(timespec="seconds"),))
-        self.cli("tick")
-        self.assertEqual([r[0] for r in self.runs(name)], ["running"])
-        self.assertEqual(self.wait_for(name)[0][:2], ("ok", 0))
+        time.sleep(1.1)  # older than the (shortened) grace; its start is left true
+        with sqlite3.connect(self.db) as c:  # and a refused second run behind it
+            c.execute("INSERT INTO run (job_id, started_at, finished_at, outcome) SELECT id, ?, ?, 'overlap'"
+                      " FROM job WHERE name=?", (datetime.now(timezone.utc).isoformat(timespec="seconds"),) * 2 + (name,))
+        p = subprocess.run([BIN, "tick"], env={**self.env, "CRONTINENTAL_LOST_GRACE_SEC": "1"},
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual([r[0] for r in self.runs(name)], ["running", "overlap"])
+        self.assertEqual(self.wait_for(name, 2)[0][:2], ("ok", 0))
 
     def name(self, short):
         name = self.prefix + short

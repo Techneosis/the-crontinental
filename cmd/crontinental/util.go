@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -215,10 +216,99 @@ func truncate(s string, n int) string {
 	return string(r[:n])
 }
 
-// isExecOf says whether a command line is crontinental's exec for this job: the
-// binary named crontinental (by any path), then exec, then the name, exactly.
-// (macOS reads it from ps to tell its own run from a process that reused
-// the pid.)
+// The process checks, kept here (not in platform_*.go) so their parsing is
+// tested on every platform.
+
+// startSlack is how much later than its run's start a process may have begun
+// and still be that run's: exec is started, then writes the run. Anything that
+// began later is a later run's.
+const startSlack = 5 * time.Second
+
+// isExecOf says whether a command line is the exec of a run of this job, as
+// dispatch starts it on either platform (`<binary> exec <name> --due ...`).
+// The binary's own name isn't relied on: a release runs from a versioned path,
+// and anyone may rename it.
 func isExecOf(args, name string) bool {
-	return regexp.MustCompile(`(^|/)crontinental exec ` + regexp.QuoteMeta(name) + `( |$)`).MatchString(args)
+	return regexp.MustCompile(`(^|\s)exec ` + regexp.QuoteMeta(name) + ` --due `).MatchString(args)
+}
+
+// parseLock reads a run's lock file: exec's pid, then the command's process
+// group once it has started (0 until then). Only the first line counts: the
+// file is rewritten in place, so for a moment it can hold the end of an older,
+// longer line after the newline.
+func parseLock(data []byte) (pid, pgid int) {
+	line, _, _ := strings.Cut(string(data), "\n")
+	f := strings.Fields(line)
+	if len(f) > 0 {
+		pid, _ = strconv.Atoi(f[0])
+	}
+	if len(f) > 1 {
+		pgid, _ = strconv.Atoi(f[1])
+	}
+	return max(pid, 0), max(pgid, 0)
+}
+
+// parseEtime reads ps's elapsed time, [[dd-]hh:]mm:ss.
+func parseEtime(s string) (time.Duration, bool) {
+	s = strings.TrimSpace(s)
+	days := 0
+	if d, rest, ok := strings.Cut(s, "-"); ok {
+		n, err := strconv.Atoi(d)
+		if err != nil {
+			return 0, false
+		}
+		days, s = n, rest
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) < 2 || len(parts) > 3 {
+		return 0, false
+	}
+	total := 0
+	for _, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return 0, false
+		}
+		total = total*60 + n
+	}
+	return time.Duration(days*86400+total) * time.Second, true
+}
+
+// psSaysAlive reads `ps -o etime=,args= -p <pid>` for a run that started at
+// started: alive only while it is still this job's exec, begun no later than
+// the run.
+func psSaysAlive(out, name string, started, at time.Time) bool {
+	out = strings.TrimSpace(out)
+	et, args, _ := strings.Cut(out, " ")
+	el, ok := parseEtime(et)
+	if !ok || !isExecOf(strings.TrimSpace(args), name) {
+		return false
+	}
+	return !at.Add(-el).After(started.Add(startSlack))
+}
+
+// unitSaysAlive reads `systemctl show -p ActiveState -p ActiveEnterTimestamp
+// --timestamp=unix` for a run that started at started: alive while the unit is
+// up and became active for this run, not a later one (the unit's name is the
+// job's, shared by all its runs).
+func unitSaysAlive(out string, started time.Time) bool {
+	state, enter := "", ""
+	for _, l := range strings.Split(out, "\n") {
+		k, v, _ := strings.Cut(strings.TrimSpace(l), "=")
+		switch k {
+		case "ActiveState":
+			state = v
+		case "ActiveEnterTimestamp":
+			enter = v
+		}
+	}
+	switch state {
+	case "active", "activating", "deactivating", "reloading", "refreshing":
+	default:
+		return false
+	}
+	if n, err := strconv.ParseInt(strings.TrimPrefix(enter, "@"), 10, 64); err == nil && strings.HasPrefix(enter, "@") {
+		return !time.Unix(n, 0).After(started.Add(startSlack))
+	}
+	return true // no time to compare: the unit is up
 }

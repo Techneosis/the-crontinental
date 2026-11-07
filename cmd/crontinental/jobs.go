@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -282,6 +283,15 @@ func reap(db *sql.DB, t time.Time) {
 // run's unit, so this is a margin, not the guard.)
 const lostGraceSec = 60
 
+// lostGrace is lostGraceSec, unless CRONTINENTAL_LOST_GRACE_SEC says otherwise
+// (the tests, so a live run needn't be a minute old to be asked after).
+func lostGrace() time.Duration {
+	if n, err := strconv.Atoi(os.Getenv("CRONTINENTAL_LOST_GRACE_SEC")); err == nil && n >= 0 {
+		return time.Duration(n) * time.Second
+	}
+	return lostGraceSec * time.Second
+}
+
 const lostDetail = "its run died without finishing"
 
 // aliveTimeout bounds each process check: a user manager or process table that
@@ -294,22 +304,23 @@ const aliveTimeout = 3 * time.Second
 // the platform says so (runAlive), or when a later run of the same job started,
 // which it couldn't have while this one held the job.
 func findLost(db *sql.DB, t time.Time) {
-	rows, err := db.Query(`SELECT r.id, r.job_id, j.name, EXISTS (SELECT 1 FROM run n WHERE n.job_id=r.job_id
+	rows, err := db.Query(`SELECT r.id, r.job_id, j.name, r.started_at, EXISTS (SELECT 1 FROM run n WHERE n.job_id=r.job_id
 		AND n.id>r.id AND n.outcome NOT IN ('overlap','skipped','error'))
 		FROM run r JOIN job j ON j.id=r.job_id WHERE r.outcome='running' AND r.started_at<=?`,
-		iso(t.Add(-lostGraceSec*time.Second)))
+		iso(t.Add(-lostGrace())))
 	if err != nil {
 		die("ledger: %v", err)
 	}
 	type stale struct {
 		id, job  int64
 		name     string
+		started  string
 		replaced bool
 	}
 	var found []stale
 	for rows.Next() {
 		var s stale
-		if err := rows.Scan(&s.id, &s.job, &s.name, &s.replaced); err != nil {
+		if err := rows.Scan(&s.id, &s.job, &s.name, &s.started, &s.replaced); err != nil {
 			die("ledger: %v", err)
 		}
 		found = append(found, s)
@@ -317,7 +328,7 @@ func findLost(db *sql.DB, t time.Time) {
 	rows.Close()
 	var report []stale
 	for _, s := range found {
-		if !s.replaced && runAlive(s.name) {
+		if !s.replaced && runAlive(s.name, parseISO(s.started)) {
 			continue
 		}
 		res := mustExec(db, `UPDATE run SET outcome='lost', finished_at=?, detail=? WHERE id=? AND outcome='running'`,
@@ -330,6 +341,7 @@ func findLost(db *sql.DB, t time.Time) {
 	// hooks one after another could take the tick past its own time limit. Each
 	// is in the message book before its hooks ring.
 	var wg sync.WaitGroup
+	slots := make(chan struct{}, 8) // at most this many events ringing at once
 	for _, s := range report {
 		j := lookupJob(db, s.name)
 		if j == nil || j.Notify == "never" {
@@ -338,6 +350,8 @@ func findLost(db *sql.DB, t time.Time) {
 		wg.Add(1)
 		go func(j *Job, run int64) {
 			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
 			notifyRun(j, run, "lost", "Scheduled job lost", j.Name+": "+lostDetail, true, nil, nil)
 		}(j, s.id)
 	}

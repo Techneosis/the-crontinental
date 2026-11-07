@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -177,11 +178,10 @@ func stopRun(name string) {
 		return // nothing holds it: no run in progress
 	}
 	data, _ := io.ReadAll(f)
-	ids := strings.Fields(string(data))
-	if len(ids) == 0 {
+	execPid, pgid := parseLock(data)
+	if execPid == 0 {
 		return
 	}
-	execPid, _ := strconv.Atoi(ids[0])
 	if execPid > 0 {
 		_ = syscall.Kill(execPid, syscall.SIGTERM)
 	}
@@ -192,10 +192,8 @@ func stopRun(name string) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if len(ids) > 1 {
-		if pgid, _ := strconv.Atoi(ids[1]); pgid > 0 {
-			_ = syscall.Kill(-pgid, syscall.SIGKILL)
-		}
+	if pgid > 0 {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	}
 	if execPid > 0 {
 		_ = syscall.Kill(execPid, syscall.SIGKILL)
@@ -305,36 +303,35 @@ func showLog(name string, lines int, follow bool) {
 }
 
 // runAlive says whether a run the ledger records as running is really in
-// progress: the exec named in its lock file is still alive, and is still this
-// job's exec (the file outlives its run, so the pid may since have gone to some
-// other process). It reads the file rather than trying the lock, because a
-// probe that held the lock for even a moment would make a run starting at that
-// moment refuse itself as an overlap. A process table that doesn't answer
-// within aliveTimeout is no answer, and the ledger is believed.
-func runAlive(name string) bool {
+// progress: the exec named in its lock file is alive, is this job's exec, and
+// began no later than the run (the file outlives its run, so the pid may since
+// have gone to another process, or to the next run's exec). It reads the file
+// rather than trying the lock, because a probe that held the lock for even a
+// moment would make a run starting at that moment refuse itself as an overlap.
+// Only ps saying the pid is gone (exit 1) counts as dead: a ps that fails any
+// other way, or doesn't answer within aliveTimeout, is no answer, and the
+// ledger is believed.
+func runAlive(name string, started time.Time) bool {
 	data, err := os.ReadFile(lockPath(name))
 	if err != nil {
 		return false
 	}
-	ids := strings.Fields(string(data))
-	if len(ids) == 0 {
-		return false
-	}
-	pid, _ := strconv.Atoi(ids[0])
-	if pid <= 0 {
-		return false
-	}
-	if err := syscall.Kill(pid, 0); err != nil && err != syscall.EPERM {
+	pid, _ := parseLock(data)
+	if pid == 0 {
 		return false
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), aliveTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
+	out, err := exec.CommandContext(ctx, "ps", "-o", "etime=,args=", "-p", strconv.Itoa(pid)).Output()
 	if ctx.Err() != nil {
 		return true
 	}
 	if err != nil {
-		return false
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 {
+			return false // no such process
+		}
+		return true
 	}
-	return isExecOf(strings.TrimSpace(string(out)), name)
+	return psSaysAlive(string(out), name, started, time.Now())
 }
