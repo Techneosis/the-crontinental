@@ -189,6 +189,13 @@ func cmdNotify(o *opts) {
 			j = &Job{Name: name} // removed mid-run: still the job's word
 		}
 	}
+	if len(extra) > 0 { // the message's tags are the job's with these laid over
+		merged := jobTags(j)
+		for k, v := range extra {
+			merged[k] = v
+		}
+		checkTagSet(merged)
+	}
 	title := o.title
 	if title == "" {
 		title = "Crontinental"

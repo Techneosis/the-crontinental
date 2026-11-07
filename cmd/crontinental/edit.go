@@ -150,6 +150,7 @@ func cmdEdit(o *opts) {
 		for k, v := range parseTags(o.tags) {
 			tags[k] = v
 		}
+		checkTagSet(tags)
 		set("tags", tagsValue(tags), "tags")
 	}
 	if len(o.command) > 0 {
@@ -164,7 +165,9 @@ func cmdEdit(o *opts) {
 		die("nothing to change (see crontinental --help for what edit takes)")
 	}
 	for c := range sets {
-		if c != "note" && c != "notify" && c != "tags" { // why, how loudly, and to whom: harmless
+		// Why, and how loudly: harmless. Not tags: they reach the job's command
+		// now, so they change what its runs see.
+		if c != "note" && c != "notify" {
 			guardOthers(j, "edit", o.force)
 			break
 		}

@@ -119,6 +119,7 @@ func cmdAdd(o *opts, kind string) {
 		by = provenance()
 	}
 	tags := parseTags(o.tags)
+	checkTagSet(tags)
 
 	// A one-off due now is booked already fired: no next_run for the tick to find,
 	// so the run below is its only one. (Same order as the tick: advance, then
@@ -362,12 +363,16 @@ func cmdExec(o *opts) {
 	// its schedule twice: CRONTINENTAL_NEXT, when it is next due (the tick has
 	// already moved it on; unset if it won't come round again), and
 	// CRONTINENTAL_UNTIL, when the schedule ends (unset if it has no deadline).
-	// None of the four is inherited from a run that started this one.
+	// And the job's tags, as its hooks see them (CRONTINENTAL_TAG_<KEY>, and
+	// CRONTINENTAL_TAGS with the set), so what the command reports to can be
+	// told by the booking. None of these is inherited from a run that started
+	// this one.
 	var env []string
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		switch k {
-		case "CRONTINENTAL_JOB", "CRONTINENTAL_RUN", "CRONTINENTAL_NEXT", "CRONTINENTAL_UNTIL":
+		switch {
+		case k == "CRONTINENTAL_JOB", k == "CRONTINENTAL_RUN", k == "CRONTINENTAL_NEXT", k == "CRONTINENTAL_UNTIL":
+		case isTagVar(kv):
 		default:
 			env = append(env, kv)
 		}
@@ -379,6 +384,7 @@ func cmdExec(o *opts) {
 	if j.Until.Valid {
 		env = append(env, "CRONTINENTAL_UNTIL="+j.Until.String)
 	}
+	env = append(env, tagEnv(jobTags(j))...)
 	cmd.Env = env
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, os.Stdout, os.Stderr
 	// Its own process group, so a stop or a timeout reaches everything the

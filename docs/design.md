@@ -209,12 +209,29 @@ event about the job hands them to every hook, as `CRONTINENTAL_TAG_<KEY>` and as
 a `tags` object in the JSON (`{}` for none), so one hook can route by job
 without a hook per job or a table of job names. Crontinental gives them no
 meaning. A key is letters, digits and `_`, starting with a letter, and stored
-lowercase, because it becomes part of a variable's name; a value is anything
-but empty. They live in one `tags` column as a JSON object (schema v3), so a
+lowercase, because it becomes part of a variable's name; a value is text
+(UTF-8, no NUL), not empty, up to 1KiB. They live in one `tags` column as a JSON object (schema v3), so a
 new tag is never a new column. A hook starts from its caller's environment with
 any inherited `CRONTINENTAL_TAG_*` removed, so it sees exactly this event's
-tags. An agent's edit that only changes tags, like `--note` and `--notify`, is
-not refused by the guard below.
+tags. Every hook also gets `CRONTINENTAL_TAGS`, the event's whole set as one
+JSON object (`{}` for none). The command of every run gets its job's tags the
+same way (`CRONTINENTAL_TAG_<KEY>` and `CRONTINENTAL_TAGS`), so a tool the job
+calls can route by the booking too; like the other run variables, none is
+inherited from a run that started this one, and a `notify` inside the run still
+builds its tags from the ledger, not from them. Tags are labels, not secrets:
+they are plain in the ledger, the message book, `show` and `list --json`, and
+in every run's and hook's environment. A run's tags are a snapshot: an edit
+reaches the next run, not one already going. Because every tag rides in every
+run's environment, where the kernel limits a single variable (128KiB on Linux),
+a value holds up to 1KiB of text (UTF-8, no NUL) and a job's set up to 8KiB as
+JSON (measured as written, `&` as one byte), refused at `--tag`, and for a
+`notify --tag` inside a run on the job's tags with the message's laid over. The
+limits are for new tags: a tag booked before them reaches the hooks as it did,
+and only one that cannot be a variable at all (a key no shell can spell, a NUL,
+past 64KiB) is left out. A tags column that can't be read is taken as
+none, with a line in the log, rather than stopping a run or the `edit` that
+would mend it. An agent's edit that changes tags is guarded like any other
+(below): they reach the job's command, so they change what its runs see.
 
 Messages can be marked seen (`seen ID... | --through ID | --all [--by WHO]`,
 schema v5: `seen_at` and `seen_by` on the message book, NULL until then). The
@@ -328,7 +345,7 @@ edit to a finished job says so and leaves it finished.
 Inside a Claude Code session (`CLAUDE_CODE_SESSION_ID` set), `rm`, `disable` and
 `edit` refuse a job whose `created_by` isn't this session's `claude:<id>`, and
 name who booked it, unless `--force` is passed. An edit that touches only
-`--note`, `--notify` or tags is let through; `enable` is never guarded, since it
+`--note` or `--notify` is let through; `enable` is never guarded, since it
 can't lose anything. Outside a session nothing changes.
 
 It is keyed on *this session*, not on "booked by an agent", because a person's

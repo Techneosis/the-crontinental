@@ -123,8 +123,8 @@ options for in/at/every:
   --notify never|fail|always   (default: fail)
   --note TEXT         why this exists
   --by WHO            who scheduled it (default: the Claude session, or $USER)
-  --tag KEY=VALUE     a word for the notify hooks, as CRONTINENTAL_TAG_<KEY>
-                      (repeatable; e.g. --tag topic=ops)
+  --tag KEY=VALUE     a word for the notify hooks and the command, as
+                      CRONTINENTAL_TAG_<KEY> (repeatable; e.g. --tag topic=ops)
 
 edit <name> takes any of the options above except --name, --by and --now, plus:
   --every SPEC        a repeat's new schedule
@@ -147,8 +147,9 @@ A job can send its own word with "crontinental notify" at any point: the
 command runs with CRONTINENTAL_JOB set, so the message carries the job. That
 goes out whatever --notify says, which only governs the end-of-run reports.
 It also has CRONTINENTAL_RUN (this run's id), CRONTINENTAL_NEXT (when the job is
-next due, ISO-8601; unset if it won't run again) and CRONTINENTAL_UNTIL (when
-its schedule ends; unset if it has no deadline).
+next due, ISO-8601; unset if it won't run again), CRONTINENTAL_UNTIL (when
+its schedule ends; unset if it has no deadline), and its tags: one
+CRONTINENTAL_TAG_<KEY> each, and CRONTINENTAL_TAGS with all of them as JSON.
 
 Every job runs in a login shell (bash -lc on Linux, your own login shell on
 macOS), so PATH is the one your terminal has.
