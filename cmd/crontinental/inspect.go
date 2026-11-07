@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -91,8 +92,12 @@ func cmdList(o *opts) {
 			mark = marks[lr.outcome]
 			// as --json reads it: a run the ledger has as running but whose
 			// process is gone is lost, before the tick has written it down
-			if lr.outcome == "running" {
-				if st, _ := jobState(db, j); st == "failed" {
+			// and a run in progress behind a dispatch that failed is running
+			if lr.outcome == "running" || lr.outcome == "error" {
+				switch st, _, _ := jobState(db, j); {
+				case st == "running":
+					mark = marks["running"]
+				case lr.outcome == "running":
 					mark = marks["lost"]
 				}
 			}
@@ -130,8 +135,21 @@ func listJSON(db *sql.DB, q string) {
 			last = runs[0]
 		}
 		jobs[i] = withKey(jobs[i], "last_run", last)
-		jobs[i] = withState(db, jobs[i], ids[i])
 	}
+	// Side by side, since each job with a run in progress asks the platform,
+	// so the slowest answer is the wait, not the sum of them.
+	var wg sync.WaitGroup
+	slots := make(chan struct{}, 8)
+	for i := range jobs {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			jobs[i] = withState(db, jobs[i], ids[i])
+		}(i)
+	}
+	wg.Wait()
 	printJSON(jobs)
 }
 
@@ -152,7 +170,10 @@ var badEndings = map[string]bool{"fail": true, "killed": true, "error": true, "l
 // Runs that never started (skipped, overlap) say nothing about health, so the
 // last run that did is the one that counts. A run in progress beats a pause:
 // disabling a job doesn't stop the run it already has.
-func jobState(db *sql.DB, j *Job) (string, *runningRun) {
+//
+// check is set when the platform gave no answer about a run in progress
+// (checkTimedOut, checkUnavailable), and the ledger was believed.
+func jobState(db *sql.DB, j *Job) (state string, run *runningRun, check string) {
 	// The run in progress, if there is one: the latest marked running with no
 	// later run behind it that started, the same rule the tick's findLost uses.
 	var runID int64
@@ -162,24 +183,25 @@ func jobState(db *sql.DB, j *Job) (string, *runningRun) {
 			AND n.outcome NOT IN ('overlap','skipped','error'))
 		ORDER BY r.id DESC LIMIT 1`, j.ID).Scan(&runID, &started)
 	if err == nil {
-		if runAlive(j.Name, parseISO(started)) {
+		alive, check := runAlive(j.Name, parseISO(started))
+		if alive {
 			return "running", &runningRun{Run: runID, StartedAt: started,
-				ElapsedSec: int64(max(0, now().Sub(parseISO(started)).Seconds()))}
+				ElapsedSec: int64(max(0, now().Sub(parseISO(started)).Seconds()))}, check
 		}
-		return "failed", nil // gone, and not yet written down as lost
+		return "failed", nil, "" // gone, and not yet written down as lost
 	}
 	var last string
 	_ = db.QueryRow(`SELECT outcome FROM run WHERE job_id=? AND outcome NOT IN ('skipped','overlap','running')
 		ORDER BY id DESC LIMIT 1`, j.ID).Scan(&last)
 	switch {
 	case j.Enabled == 0 && !j.FinishedAt.Valid:
-		return "paused", nil
+		return "paused", nil, ""
 	case badEndings[last]:
-		return "failed", nil
+		return "failed", nil, ""
 	case j.FinishedAt.Valid:
-		return "done", nil
+		return "done", nil, ""
 	}
-	return "scheduled", nil
+	return "scheduled", nil, ""
 }
 
 type runningRun struct {
@@ -194,10 +216,15 @@ func withState(db *sql.DB, obj json.RawMessage, id int64) json.RawMessage {
 	if err != nil {
 		return obj
 	}
-	state, run := jobState(db, j)
+	state, run, check := jobState(db, j)
 	sj, _ := json.Marshal(state)
 	rj, _ := json.Marshal(run) // null when nothing is running
-	return withKey(withKey(obj, "state", sj), "running", rj)
+	obj = withKey(withKey(obj, "state", sj), "running", rj)
+	if check != "" { // the platform didn't answer; the ledger was believed
+		cj, _ := json.Marshal(check)
+		obj = withKey(obj, "check", cj)
+	}
+	return obj
 }
 
 // runQuery is a job's runs, newest first, as show --json and last_run give them.

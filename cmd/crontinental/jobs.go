@@ -298,6 +298,17 @@ const lostDetail = "its run died without finishing"
 // doesn't answer in time is no answer, and the ledger is believed.
 const aliveTimeout = 3 * time.Second
 
+// lostCheckBudget is how long one round spends asking after running runs, so
+// the checks and the hooks after them stay well inside the tick's own limit.
+const lostCheckBudget = 15 * time.Second
+
+// What runAlive says when the platform gave no answer, and the ledger was
+// believed: shown as list --json's "check".
+const (
+	checkTimedOut    = "timed out"
+	checkUnavailable = "unavailable"
+)
+
 // findLost closes the runs the ledger still has as running whose exec is gone
 // -- the machine lost power mid-run, or exec was killed too hard to write its
 // ending down -- as lost, once, and reports each as trouble. A run is gone when
@@ -326,9 +337,33 @@ func findLost(db *sql.DB, t time.Time) {
 		found = append(found, s)
 	}
 	rows.Close()
+	// Asked side by side, and only for as long as the round can spare: a run not
+	// asked about in time is asked about next round.
+	dead := make([]bool, len(found))
+	budget := time.Now().Add(lostCheckBudget)
+	var checks sync.WaitGroup
+	slots := make(chan struct{}, 8)
+	for i, s := range found {
+		if s.replaced {
+			dead[i] = true
+			continue
+		}
+		checks.Add(1)
+		go func(i int, s stale) {
+			defer checks.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			if time.Now().After(budget) {
+				return
+			}
+			alive, _ := runAlive(s.name, parseISO(s.started))
+			dead[i] = !alive
+		}(i, s)
+	}
+	checks.Wait()
 	var report []stale
-	for _, s := range found {
-		if !s.replaced && runAlive(s.name, parseISO(s.started)) {
+	for i, s := range found {
+		if !dead[i] {
 			continue
 		}
 		res := mustExec(db, `UPDATE run SET outcome='lost', finished_at=?, detail=? WHERE id=? AND outcome='running'`,
@@ -340,8 +375,7 @@ func findLost(db *sql.DB, t time.Time) {
 	// All at once: a power cut leaves every running run behind together, and
 	// hooks one after another could take the tick past its own time limit. Each
 	// is in the message book before its hooks ring.
-	var wg sync.WaitGroup
-	slots := make(chan struct{}, 8) // at most this many events ringing at once
+	var wg sync.WaitGroup // at most eight events ringing at once, as above
 	for _, s := range report {
 		j := lookupJob(db, s.name)
 		if j == nil || j.Notify == "never" {
@@ -416,8 +450,15 @@ func cmdExec(o *opts) {
 	currentRun = runID
 
 	finish := func(status int, outcome, detail string) {
+		var was string
+		_ = db.QueryRow("SELECT outcome FROM run WHERE id=?", runID).Scan(&was)
 		mustExec(db, "UPDATE run SET finished_at=?, status=?, outcome=?, detail=? WHERE id=?",
 			iso(now()), status, outcome, nullIfEmpty(detail), runID)
+		// The tick wrote this run off as lost while it was alive: take its
+		// lost message down everywhere. The run's own report follows as usual.
+		if was == "lost" {
+			markSeen(db, "event='lost' AND run_id=?", []any{runID}, retractedBy)
+		}
 	}
 	// One ending per run. On Linux a stop reaches this process and the command
 	// at the same moment, so the signal handler and the command's own exit race

@@ -356,10 +356,20 @@ func cmdSeen(o *opts) {
 	}
 
 	db := connect()
+	if n := markSeen(db, cond, args, o.by); n == 0 {
+		fmt.Println("nothing new to mark seen")
+	} else {
+		fmt.Printf("marked %d seen\n", n)
+	}
+}
+
+// markSeen marks the unseen messages matching cond seen by `by`, and tells the
+// seen.d hooks about the newly marked, in one call. It returns how many.
+func markSeen(db *sql.DB, cond string, args []any, byName string) int {
 	t := iso(now())
 	var by any
-	if o.by != "" {
-		by = o.by
+	if byName != "" {
+		by = byName
 	}
 	tx, err := db.Begin()
 	if err != nil {
@@ -379,27 +389,24 @@ func cmdSeen(o *opts) {
 		die("ledger: %v", err)
 	}
 	if len(newly) == 0 {
-		fmt.Println("nothing new to mark seen")
-		return
+		return 0
 	}
-	fmt.Printf("marked %d seen\n", len(newly))
-
 	hs := hooksIn(seenDir())
 	if len(hs) == 0 {
-		return
+		return len(newly)
 	}
 	payload, _ := json.Marshal(struct {
 		SeenAt   string            `json:"seen_at"`
 		SeenBy   string            `json:"seen_by"`
 		Messages []json.RawMessage `json:"messages"`
-	}{t, o.by, rows})
+	}{t, byName, rows})
 	strs := make([]string, len(newly))
 	for i, id := range newly {
 		strs[i] = strconv.FormatInt(id, 10)
 	}
 	host, _ := os.Hostname()
 	env := append(hookEnviron(), "CRONTINENTAL_EVENT=seen", "CRONTINENTAL_MESSAGES="+strings.Join(strs, " "),
-		"CRONTINENTAL_SEEN_BY="+o.by, "CRONTINENTAL_SEEN_AT="+t, "CRONTINENTAL_HOST="+host)
+		"CRONTINENTAL_SEEN_BY="+byName, "CRONTINENTAL_SEEN_AT="+t, "CRONTINENTAL_HOST="+host)
 	var wg sync.WaitGroup
 	for _, h := range hs {
 		wg.Add(1)
@@ -409,7 +416,12 @@ func cmdSeen(o *opts) {
 		}(h)
 	}
 	wg.Wait()
+	return len(newly)
 }
+
+// retractedBy is who marks a lost run's message seen when the run reports back
+// after all: the tick's guess was wrong, so every device can take it down.
+const retractedBy = "crontinental: the run finished after all"
 
 func runHook(path string, env []string, payload []byte) {
 	ctx, cancel := context.WithTimeout(context.Background(), hookTimeout)

@@ -376,7 +376,7 @@ crontinental upgrade           refit the hotel to the latest release (--check on
 
 | `state` | the guest |
 |---|---|
-| `running` | is in their room right now, and the building agrees (`running` holds the stay's number, when it began, and for how long) |
+| `running` | is in their room right now, and the building agrees (`running` holds the stay's number, when it began, and for how long; `check` says when the building didn't answer and the books were taken at their word) |
 | `paused` | has their room held (`disable`) |
 | `failed` | left badly last time (`lost` included), or is gone from a room the books still have them in |
 | `done` | has checked out, and is waiting for the cleaners |
@@ -387,7 +387,9 @@ Linux, whether the stay's unit is still up; on macOS, whether the Steward named
 on the lock is still in the room). A Steward who was struck down too suddenly to
 write anything leaves a stay that only *looks* occupied: the board shows it as
 trouble at once, and the Concierge's next round (after a minute's grace) writes
-it down as `lost`. Stays that never began (`skipped`,
+it down as `lost`. Should the Steward turn up after all and settle the bill, the
+stay is written down as it really ended, and the call about it is withdrawn
+from every telephone (marked seen, on the second switchboard). Stays that never began (`skipped`,
 `overlap`) say nothing about how a guest is doing. A held guest still in their
 room reads `running` until they leave.
 

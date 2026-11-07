@@ -13,6 +13,7 @@ import os
 import shlex
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -725,6 +726,21 @@ class Notify(Ledger):
         self.add_run("j", "skipped")  # a power cut, then catchup=skip
         self.assertIn("LOST", self.cli("list").stdout)
         self.assertEqual(self.states()["j"][0], "failed")
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "the user manager is Linux's")
+    def test_no_answer_from_the_platform_believes_the_ledger_and_says_so(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
+        self.stale_run("j")
+        env = {**self.env, "XDG_RUNTIME_DIR": "/nonexistent", "DBUS_SESSION_BUS_ADDRESS": "unix:path=/nonexistent"}
+        p = subprocess.run([BIN, "list", "--json"], env=env, capture_output=True, text=True)
+        job, = json.loads(p.stdout)
+        self.assertEqual((job["state"], job["check"]), ("running", "unavailable"))
+        self.assertEqual(job["running"]["run"], self.sql("SELECT id FROM run")[0][0])
+        subprocess.run([BIN, "tick"], env=env, capture_output=True, check=True)
+        self.assertEqual(self.sql("SELECT outcome FROM run"), [("running",)])  # not written off
+        # an answer leaves no check field
+        self.add_run("j", "ok", 0)
+        self.assertNotIn("check", json.loads(self.cli("list", "--json").stdout)[0])
 
     def test_a_dead_run_behind_a_later_good_one_reads_by_the_later_one(self):
         self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")

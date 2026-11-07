@@ -311,27 +311,28 @@ func showLog(name string, lines int, follow bool) {
 // Only ps saying the pid is gone (exit 1) counts as dead: a ps that fails any
 // other way, or doesn't answer within aliveTimeout, is no answer, and the
 // ledger is believed.
-func runAlive(name string, started time.Time) bool {
+func runAlive(name string, started time.Time) (bool, string) {
 	data, err := os.ReadFile(lockPath(name))
 	if err != nil {
-		return false
+		return false, ""
 	}
 	pid, _ := parseLock(data)
 	if pid == 0 {
-		return false
+		return false, ""
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), aliveTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "ps", "-o", "etime=,args=", "-p", strconv.Itoa(pid)).Output()
+	// -ww: the whole command line, however wide; the match needs its end
+	out, err := exec.CommandContext(ctx, "ps", "-ww", "-o", "etime=,args=", "-p", strconv.Itoa(pid)).Output()
 	if ctx.Err() != nil {
-		return true
+		return true, checkTimedOut
 	}
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && ee.ExitCode() == 1 {
-			return false // no such process
+			return false, "" // no such process
 		}
-		return true
+		return true, checkUnavailable
 	}
-	return psSaysAlive(string(out), name, started, time.Now())
+	return psSaysAlive(string(out), name, started, time.Now()), ""
 }

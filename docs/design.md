@@ -329,11 +329,16 @@ later run's.
   moment would turn away a run starting at that moment as an overlap. The file
   is rewritten in place, so only its first line is read (by `rm` too).
 
-Every check is capped at 3s, and no answer believes the ledger. `list` and
-`show` only read, and the plain `list` marks a run that is gone but not yet
-written down `LOST`, as `--json` calls it `failed`. They ask once per job whose
-latest run is marked running, one after another, so a `list --json` costs a
-process check per run in progress.
+Every check is capped at 3s, and no answer believes the ledger: the job reads
+`running`, and `--json` adds `"check": "timed out"` (no answer in time) or
+`"check": "unavailable"` (the user manager or `ps` couldn't be asked), so a
+reader can show that the platform isn't answering; with an answer there is no
+`check`. (On Linux a systemd without `--timestamp=unix` is asked again
+without it, and judged by the unit's state alone.) `list` and `show` only read,
+and the plain `list` marks a run that is gone but not yet written down `LOST`,
+and a run in progress behind a failed dispatch `running`, as `--json` reads
+them. `list --json` asks for up to eight jobs side by side, so its wait is the
+slowest answer, not the sum.
 
 The tick writes it down. Each round, after it has dispatched what was due, a
 run still marked `running` that started
@@ -353,8 +358,12 @@ reported together (at most eight events ringing at once), each in the message
 book before its hooks ring; a tick stopped mid-ring loses the push for that
 run, not its record, so a power
 cut that leaves many costs one hook timeout, not one each. If the exec was
-alive after all and finishes later, its own ending overwrites `lost`, and its
-end-of-run report goes out as usual: the truth wins over the tick's guess.
+alive after all and finishes later, its own ending overwrites `lost`, its
+end-of-run report goes out as usual, and the `lost` message is marked seen by
+"crontinental: the run finished after all", so the `seen.d` hooks take it down
+on every device: the truth wins over the tick's guess, and the guess is
+withdrawn. The round's checks run up to eight at once, within 15s in all; a run
+not asked after in time is asked after next round.
 `list`'s mark shows the last run that started when a `skipped` or `overlap`
 comes after trouble, so a lost run isn't covered up by the skip a power cut
 with `catchup=skip` leaves behind it. `crontinental exec` is the run's own

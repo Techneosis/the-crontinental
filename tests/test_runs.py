@@ -156,8 +156,39 @@ class Runs(unittest.TestCase):
                       " 'error', 'could not start' FROM job WHERE name=?",
                       (datetime.now(timezone.utc).isoformat(timespec="seconds"),) * 2 + (name,))
         self.assertEqual(self.state(name)[0], "running")
+        self.assertIn("running", self.cli("list"))  # and the plain list agrees
         self.wait_for(name, 2)
         self.assertEqual(self.state(name)[0], "failed")  # the error is its last word, once the run ends
+
+    def test_a_run_written_off_that_finishes_after_all_takes_its_lost_message_down(self):
+        # exec started by hand, outside dispatch: the platform can't see it, so
+        # the tick (with no grace) writes it off while it is still going
+        seen = os.path.join(self.tmp.name, "seen.d")
+        os.mkdir(seen)
+        out = os.path.join(self.tmp.name, "seen.out")
+        hook = os.path.join(seen, "rec")
+        with open(hook, "w") as f:
+            f.write(f'#!/bin/sh\necho "$CRONTINENTAL_MESSAGES|$CRONTINENTAL_SEEN_BY" >> {out}\n')
+        os.chmod(hook, 0o755)
+        env = {**self.env, "CRONTINENTAL_SEEN_DIR": seen, "CRONTINENTAL_LOST_GRACE_SEC": "0"}
+        name = self.book("late", "sleep 3", "--forever")
+        with sqlite3.connect(self.db) as c:
+            c.execute("UPDATE job SET notify='fail' WHERE name=?", (name,))
+        p = subprocess.Popen([BIN, "exec", name], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            self.wait_running(name)
+            time.sleep(1.1)
+            subprocess.run([BIN, "tick"], env=env, capture_output=True, check=True)
+            self.assertEqual(self.runs(name)[0][0], "lost")
+            self.assertEqual(p.wait(timeout=20), 0)
+        finally:
+            p.kill()
+        self.assertEqual(self.runs(name)[0][:2], ("ok", 0))
+        with sqlite3.connect(self.db) as c:
+            (msg, seen_by), = c.execute("SELECT id, seen_by FROM message WHERE event='lost'").fetchall()
+        self.assertEqual(seen_by, "crontinental: the run finished after all")
+        with open(out) as f:
+            self.assertEqual(f.read().strip(), f"{msg}|crontinental: the run finished after all")
 
     def test_a_dead_run_isnt_kept_alive_by_the_next_run_of_its_job(self):
         # the next run is up, but hasn't written its own row yet: the job's unit
