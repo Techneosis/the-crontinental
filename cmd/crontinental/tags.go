@@ -77,24 +77,40 @@ func describeTags(tags map[string]string) string {
 	return strings.Join(parts, ", ")
 }
 
+// tagsEnvVar holds the whole set as one JSON object, for a reader that wants
+// them all without scanning the environment.
+const tagsEnvVar = "CRONTINENTAL_TAGS"
+
+// isTagVar says whether an environment entry is one of the tag variables.
+func isTagVar(e string) bool {
+	return strings.HasPrefix(e, tagEnvPrefix) || strings.HasPrefix(e, tagsEnvVar+"=")
+}
+
 // hookEnviron is the environment a hook starts from: the caller's, less any
 // tag variables it inherited, so a hook sees exactly this event's tags.
 func hookEnviron() []string {
 	var env []string
 	for _, e := range os.Environ() {
-		if !strings.HasPrefix(e, tagEnvPrefix) {
+		if !isTagVar(e) {
 			env = append(env, e)
 		}
 	}
 	return env
 }
 
+// tagEnv is the tag variables for a set of tags: one CRONTINENTAL_TAG_<KEY>
+// each, and CRONTINENTAL_TAGS with all of them ({} for none). A hook gets its
+// event's; a run's command gets its job's.
 func tagEnv(tags map[string]string) []string {
 	var env []string
 	for _, k := range sortedTagKeys(tags) {
 		env = append(env, tagEnvPrefix+strings.ToUpper(k)+"="+tags[k])
 	}
-	return env
+	b, _ := json.Marshal(tags) // map keys marshal sorted
+	if len(tags) == 0 {
+		b = []byte("{}")
+	}
+	return append(env, tagsEnvVar+"="+string(b))
 }
 
 // rawTags is the ledger's tags column as JSON for `list --json`: an object, {}

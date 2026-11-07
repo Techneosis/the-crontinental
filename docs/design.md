@@ -213,8 +213,13 @@ lowercase, because it becomes part of a variable's name; a value is anything
 but empty. They live in one `tags` column as a JSON object (schema v3), so a
 new tag is never a new column. A hook starts from its caller's environment with
 any inherited `CRONTINENTAL_TAG_*` removed, so it sees exactly this event's
-tags. An agent's edit that only changes tags, like `--note` and `--notify`, is
-not refused by the guard below.
+tags. Every hook also gets `CRONTINENTAL_TAGS`, the event's whole set as one
+JSON object (`{}` for none). The command of every run gets its job's tags the
+same way (`CRONTINENTAL_TAG_<KEY>` and `CRONTINENTAL_TAGS`), so a tool the job
+calls can route by the booking too; like the other run variables, none is
+inherited from a run that started this one, and a `notify` inside the run still
+builds its tags from the ledger, not from them. An agent's edit that only
+changes tags, like `--note` and `--notify`, is not refused by the guard below.
 
 Messages can be marked seen (`seen ID... | --through ID | --all [--by WHO]`,
 schema v5: `seen_at` and `seen_by` on the message book, NULL until then). The

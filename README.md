@@ -267,7 +267,7 @@ wants it whole, as JSON on stdin:
 | `CRONTINENTAL_URGENCY` | `critical` for trouble, `low` otherwise |
 | `CRONTINENTAL_HEADLINE`, `_BODY` | the message, ready to show |
 | `CRONTINENTAL_LOG`, `_NOTE`, `_HOST` | how to read the logbook, the booking's note, this machine |
-| `CRONTINENTAL_TAG_<KEY>` | one for each of the booking's tags (below) |
+| `CRONTINENTAL_TAG_<KEY>`, `CRONTINENTAL_TAGS` | one for each of the call's tags (below), and all of them as a JSON object |
 | `CRONTINENTAL_MESSAGE` | the call's number in the message book (below) |
 | `CRONTINENTAL_RUN` | the stay it is about, or was made from, when there is one |
 
@@ -276,7 +276,10 @@ switchboard: `--tag topic=ops`, as many as it likes, each a name and a value.
 The house never reads them. It passes them along with every call about that
 guest, as `CRONTINENTAL_TAG_TOPIC=ops` and as `"tags"` in the JSON, and what
 `topic` means is the extension's business: one guest's trouble rings the ops
-channel, another's only the desk.
+channel, another's only the desk. The guest is handed the same instructions at
+check-in: every stay has its booking's tags in the same variables, plus
+`CRONTINENTAL_TAGS` with the lot as JSON, so whatever the guest reports to can
+be told from the booking, without the command saying it twice.
 
 ```
 crontinental every "Mon..Fri 02:00" --name backup --forever --tag ntfy_topic=ops -- restic backup ~/work

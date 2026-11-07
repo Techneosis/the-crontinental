@@ -194,6 +194,27 @@ class Stays(Ledger):
         env = self.stay_env("inner", {**self.env, "CRONTINENTAL_UNTIL": "2000-01-01T00:00:00+00:00"})
         self.assertNotIn("CRONTINENTAL_UNTIL", env)
 
+    def test_a_stay_carries_its_jobs_tags(self):
+        self.cli("every", "1h", "--name", "t", "--forever", "--tag", "topic=ops",
+                 "--tag", "Lookout=web-1", "--", "true")
+        env = self.stay_env("t")
+        self.assertEqual((env["CRONTINENTAL_TAG_TOPIC"], env["CRONTINENTAL_TAG_LOOKOUT"]),
+                         ("ops", "web-1"))
+        self.assertEqual(json.loads(env["CRONTINENTAL_TAGS"]), {"topic": "ops", "lookout": "web-1"})
+
+    def test_a_stay_without_tags_has_an_empty_set(self):
+        self.cli("every", "1h", "--name", "bare", "--forever", "--", "true")
+        env = self.stay_env("bare")
+        self.assertEqual(json.loads(env["CRONTINENTAL_TAGS"]), {})
+        self.assertFalse([k for k in env if k.startswith("CRONTINENTAL_TAG_")])
+
+    def test_a_stay_started_from_inside_another_does_not_inherit_its_tags(self):
+        self.cli("every", "1h", "--name", "child", "--forever", "--tag", "own=1", "--", "true")
+        env = self.stay_env("child", {**self.env, "CRONTINENTAL_TAG_PARENT": "x",
+                                      "CRONTINENTAL_TAGS": '{"parent":"x"}'})
+        self.assertNotIn("CRONTINENTAL_TAG_PARENT", env)
+        self.assertEqual(json.loads(env["CRONTINENTAL_TAGS"]), {"own": "1"})
+
 
 class Checkout(Ledger):
     def test_deadline_finishes_a_due_job_without_running_it(self):
@@ -528,14 +549,18 @@ class Notify(Ledger):
         [(env, ev)] = self.calls(out)
         self.assertEqual(ev["tags"], {"topic": "pager", "team": "infra", "extra": "1"})
         self.assertEqual(env["CRONTINENTAL_TAG_TOPIC"], "pager")
+        # the run's own tag set is not what the hook sees: the event's is
+        self.assertEqual(json.loads(env["CRONTINENTAL_TAGS"]), ev["tags"])
 
     def test_inherited_tag_variables_dont_leak_into_a_hook(self):
         out = self.recorder()
         self.env["CRONTINENTAL_TAG_STALE"] = "x"
+        self.env["CRONTINENTAL_TAGS"] = '{"stale":"x"}'
         self.cli("notify", "--tag", "fresh=y", "hello")
         [(env, ev)] = self.calls(out)
         self.assertNotIn("CRONTINENTAL_TAG_STALE", env)
         self.assertEqual(env["CRONTINENTAL_TAG_FRESH"], "y")
+        self.assertEqual(json.loads(env["CRONTINENTAL_TAGS"]), {"fresh": "y"})
 
     def test_a_tag_needs_a_name_and_a_value(self):
         for bad in ("topic", "topic=", "9lives=x", "a-b=x", "=x"):
