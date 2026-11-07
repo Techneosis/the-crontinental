@@ -113,8 +113,71 @@ func listJSON(db *sql.DB, q string) {
 			last = runs[0]
 		}
 		jobs[i] = withKey(jobs[i], "last_run", last)
+		jobs[i] = withState(db, jobs[i], ids[i])
 	}
 	printJSON(jobs)
+}
+
+// badEndings are the outcomes of a run that ended in trouble.
+var badEndings = map[string]bool{"fail": true, "killed": true, "error": true}
+
+// jobState is what a job is doing, as one word, and the run in progress if
+// there is one (nil otherwise):
+//
+//	running    a run is in progress, and the platform agrees it is alive
+//	paused     disabled, and not finished
+//	failed     its last run ended in trouble, or was left marked running by an
+//	           exec that died too hard to write down its ending
+//	done       finished, waiting to be deleted
+//	scheduled  anything else: waiting for next_run
+//
+// Runs that never started (skipped, overlap) say nothing about health, so the
+// last run that did is the one that counts. A run in progress beats a pause:
+// disabling a job doesn't stop the run it already has.
+func jobState(db *sql.DB, j *Job) (string, *runningRun) {
+	var last string
+	var lastID int64
+	var started string
+	err := db.QueryRow(`SELECT id, outcome, started_at FROM run WHERE job_id=?
+		AND outcome NOT IN ('skipped','overlap') ORDER BY id DESC LIMIT 1`, j.ID).Scan(&lastID, &last, &started)
+	if err != nil {
+		last = ""
+	}
+	if last == "running" {
+		if runAlive(j.Name) {
+			t := parseISO(started)
+			return "running", &runningRun{Run: lastID, StartedAt: started,
+				ElapsedSec: int64(max(0, now().Sub(t).Seconds()))}
+		}
+		return "failed", nil
+	}
+	switch {
+	case j.Enabled == 0 && !j.FinishedAt.Valid:
+		return "paused", nil
+	case badEndings[last]:
+		return "failed", nil
+	case j.FinishedAt.Valid:
+		return "done", nil
+	}
+	return "scheduled", nil
+}
+
+type runningRun struct {
+	Run        int64  `json:"run"`
+	StartedAt  string `json:"started_at"`
+	ElapsedSec int64  `json:"elapsed_sec"`
+}
+
+// withState adds state and running to a job's JSON.
+func withState(db *sql.DB, obj json.RawMessage, id int64) json.RawMessage {
+	j, err := scanJob(db.QueryRow("SELECT "+jobCols+" FROM job WHERE id=?", id))
+	if err != nil {
+		return obj
+	}
+	state, run := jobState(db, j)
+	sj, _ := json.Marshal(state)
+	rj, _ := json.Marshal(run) // null when nothing is running
+	return withKey(withKey(obj, "state", sj), "running", rj)
 }
 
 // runQuery is a job's runs, newest first, as show --json and last_run give them.
@@ -200,7 +263,7 @@ func showJSON(db *sql.DB, j *Job) {
 	jobs, _ := rowsJSON(db, "SELECT * FROM job WHERE id=?", j.ID)
 	runs, _ := rowsJSON(db, runQuery+" LIMIT 20", j.ID)
 	rj, _ := json.Marshal(runs)
-	printJSON(withKey(jobs[0], "runs", rj))
+	printJSON(withKey(withState(db, jobs[0], j.ID), "runs", rj))
 }
 
 // cmdNames prints bare names, one per line -- what tab completion reads. Every

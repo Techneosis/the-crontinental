@@ -135,3 +135,15 @@ func runTool(name string, args ...string) (stdout, stderr []byte, err error) {
 	err = cmd.Run()
 	return []byte(out.String()), []byte(errb.String()), err
 }
+
+// runAlive says whether a run the ledger records as running is really in
+// progress: its unit is still up. It only asks; it never touches the unit.
+// When the user manager can't be asked at all, the ledger is believed.
+func runAlive(name string) bool {
+	out, _, _ := runTool("systemctl", "--user", "is-active", unitName(name))
+	switch strings.TrimSpace(string(out)) {
+	case "inactive", "failed":
+		return false
+	}
+	return true
+}

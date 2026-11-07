@@ -298,3 +298,38 @@ func showLog(name string, lines int, follow bool) {
 		off += n
 	}
 }
+
+// runAlive says whether a run the ledger records as running is really in
+// progress: the exec named in its lock file is still alive. It reads the file
+// rather than trying the lock, because a probe that held the lock for even a
+// moment would make a run starting at that moment refuse itself as an overlap.
+func runAlive(name string) bool {
+	data, err := os.ReadFile(lockPath(name))
+	if err != nil {
+		return false
+	}
+	ids := strings.Fields(string(data))
+	if len(ids) == 0 {
+		return false
+	}
+	pid, _ := strconv.Atoi(ids[0])
+	if pid <= 0 {
+		return false
+	}
+	if err := syscall.Kill(pid, 0); err != nil && err != syscall.EPERM {
+		return false
+	}
+	// The file outlives its run, so the pid may since have gone to some other
+	// process: it counts only while it is still this job's exec.
+	out, err := exec.Command("ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return false
+	}
+	f := strings.Fields(string(out))
+	for i := 0; i+1 < len(f); i++ {
+		if f[i] == "exec" && f[i+1] == name {
+			return true
+		}
+	}
+	return false
+}

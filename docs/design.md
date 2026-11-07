@@ -289,6 +289,29 @@ crontinental run <name>    fire it now WITHOUT moving its schedule
 crontinental edit <name>   change it in place (see below)
 ```
 
+`list --json` and `show --json` add `state`, one word for what the job is
+doing, and `running`, the run in progress (`{run, started_at, elapsed_sec}`,
+or null):
+
+| state | when |
+|---|---|
+| `running` | the last run that started is still marked running, and the platform agrees it is alive |
+| `paused` | disabled and not finished |
+| `failed` | the last run that started ended `fail`, `killed` or `error`, or is marked running but is not alive |
+| `done` | finished, waiting to be deleted |
+| `scheduled` | anything else |
+
+in that order, so a run still going after `disable` reads `running`, and a
+finished job whose last run failed reads `failed`. Runs that never started
+(`skipped`, `overlap`) are passed over. Alive is asked of the platform, never
+taken from the ledger, because a run row stays `running` when its exec dies too
+hard to record an ending (a power cut, SIGKILL): on Linux `systemctl --user
+is-active` on the run's unit (when the user manager can't be asked at all, the
+ledger is believed); on macOS the exec pid in the job's lock file, still alive
+and still that job's `exec`. macOS deliberately reads the file rather than
+trying the lock: a probe that held it for a moment would turn away a run
+starting at that moment as an overlap. Nothing here writes to the ledger.
+
 A job's output is never captured into the database — it streams to the journal
 under the job's own unit, so `log` has exactly one source of truth and a chatty
 job doesn't bloat the table.

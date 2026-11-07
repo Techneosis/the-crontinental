@@ -365,6 +365,25 @@ crontinental seen 42 --by phone   tick a call off for every device (--through ID
 crontinental upgrade           refit the hotel to the latest release (--check only asks)
 ```
 
+**The board in the lobby.** `list --json` and `show --json` give each guest's
+`state` in one word, for a board that shows the whole house at a glance:
+
+| `state` | the guest |
+|---|---|
+| `running` | is in their room right now, and the building agrees (`running` holds the stay's number, when it began, and for how long) |
+| `paused` | has their room held (`disable`) |
+| `failed` | left badly last time, or was found gone from a room the books still had them in |
+| `done` | has checked out, and is waiting for the cleaners |
+| `scheduled` | is expected at `next_run` |
+
+The books alone don't make a guest `running`: the desk asks the building (on
+Linux, whether the stay's unit is still up; on macOS, whether the Steward named
+on the lock is still in the room). A Steward who was struck down too suddenly to
+write anything leaves a stay that only *looks* occupied, and the board shows it
+as trouble, not as a guest at home. Stays that never began (`skipped`,
+`overlap`) say nothing about how a guest is doing. A held guest still in their
+room reads `running` until they leave.
+
 ---
 
 ## The Clientele's Handbook

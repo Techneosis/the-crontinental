@@ -8,6 +8,7 @@ systemd user manager, so these skip where there is none (CI's Linux runners).
     python3 -m unittest discover tests
 """
 
+import json
 import os
 import shutil
 import sqlite3
@@ -116,6 +117,32 @@ class Runs(unittest.TestCase):
             logs.append([l for l in out.splitlines() if "line-" in l])
         self.assertEqual([len(l) for l in logs], [1, 1], logs)
         self.assertNotEqual(logs[0][0].split("line-")[1], logs[1][0].split("line-")[1])
+
+    def state(self, name):
+        job, = [j for j in json.loads(self.cli("list", "--all", "--json")) if j["name"] == name]
+        return job["state"], job["running"]
+
+    def test_a_run_in_progress_reads_running_until_it_ends(self):
+        name = self.book("live", "sleep 3", "--forever")
+        self.cli("run", name)
+        self.wait_running(name)
+        state, running = self.state(name)
+        self.assertEqual(state, "running")
+        self.assertGreaterEqual(running["elapsed_sec"], 0)
+        self.assertTrue(running["started_at"] and running["run"])
+        # held mid-run: the run it already has is still going
+        self.cli("disable", name)
+        self.assertEqual(self.state(name)[0], "running")
+        self.wait_for(name)
+        self.assertEqual(self.state(name), ("paused", None))
+
+    def test_a_run_left_marked_running_by_a_dead_exec_reads_failed(self):
+        name = self.book("ghost", "true", "--forever")
+        with sqlite3.connect(self.db) as c:
+            c.execute("INSERT INTO run (job_id, started_at, outcome) SELECT id, ?, 'running'"
+                      " FROM job WHERE name=?",
+                      ((datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(timespec="seconds"), name))
+        self.assertEqual(self.state(name), ("failed", None))
 
     def name(self, short):
         name = self.prefix + short

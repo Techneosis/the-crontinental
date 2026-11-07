@@ -657,6 +657,44 @@ class Notify(Ledger):
         self.assertEqual([r["outcome"] for r in shown["runs"]], ["fail", "ok"])
         self.assertEqual(json.loads(self.cli("show", "k", "--json").stdout)["runs"], [])
 
+    def states(self):
+        jobs = json.loads(self.cli("list", "--all", "--json").stdout)
+        return {j["name"]: (j["state"], j["running"]) for j in jobs}
+
+    def add_run(self, name, outcome, status=None):
+        self.sql("INSERT INTO run (job_id, started_at, finished_at, status, outcome)"
+                 " SELECT id, ?, ?, ?, ? FROM job WHERE name=?",
+                 ago(minutes=5), ago(minutes=4), status, outcome, name)
+
+    def test_json_says_what_each_job_is_doing(self):
+        self.cli("every", "1h", "--name", "waiting", "--forever", "--", "true")
+        self.cli("every", "1h", "--name", "held", "--forever", "--", "true")
+        self.cli("disable", "held")
+        self.cli("every", "1h", "--name", "broke", "--forever", "--notify", "never", "--", "exit 3")
+        self.cli("exec", "broke", ok=False)
+        self.cli("every", "1h", "--name", "finished", "--until-done", "--", "exit 99")
+        self.cli("exec", "finished")
+        self.assertEqual(self.states(), {"waiting": ("scheduled", None), "held": ("paused", None),
+                                         "broke": ("failed", None), "finished": ("done", None)})
+        shown = json.loads(self.cli("show", "broke", "--json").stdout)
+        self.assertEqual((shown["state"], shown["running"]), ("failed", None))
+
+    def test_a_good_run_clears_failed_and_runs_that_never_started_dont_count(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--", "true")
+        self.add_run("j", "killed", 143)
+        self.add_run("j", "overlap")
+        self.add_run("j", "skipped")
+        self.assertEqual(self.states()["j"][0], "failed")
+        self.add_run("j", "ok", 0)
+        self.add_run("j", "overlap")
+        self.assertEqual(self.states()["j"][0], "scheduled")
+
+    def test_a_finished_job_whose_last_run_failed_reads_failed(self):
+        self.cli("every", "1h", "--name", "j", "--until-done", "--", "true")
+        self.add_run("j", "fail", 1)
+        self.sql("UPDATE job SET enabled=0, next_run=NULL, finished_at=? WHERE name='j'", ago(minutes=1))
+        self.assertEqual(self.states()["j"][0], "failed")
+
     def test_log_run_needs_a_run_of_that_job(self):
         self.cli("every", "1h", "--name", "j", "--forever", "--", "true")
         self.cli("every", "1h", "--name", "k", "--forever", "--", "true")
