@@ -198,7 +198,6 @@ func cmdTick() {
 	db := connect()
 	t := now()
 	reap(db, t)
-	findLost(db, t)
 
 	rows, err := db.Query("SELECT "+jobCols+" FROM job WHERE enabled=1 AND next_run IS NOT NULL"+
 		" AND next_run<=? ORDER BY next_run", iso(t))
@@ -238,6 +237,10 @@ func cmdTick() {
 		}
 		dispatch(db, j, dueAt, late)
 	}
+
+	// Last, so that what it costs (a process check per run marked running, and
+	// the hooks for any it finds lost) never holds up a due job.
+	findLost(db, t)
 }
 
 func advance(db *sql.DB, j *Job, t time.Time) error {
@@ -281,6 +284,10 @@ const lostGraceSec = 60
 
 const lostDetail = "its run died without finishing"
 
+// aliveTimeout bounds each process check: a user manager or process table that
+// doesn't answer in time is no answer, and the ledger is believed.
+const aliveTimeout = 3 * time.Second
+
 // findLost closes the runs the ledger still has as running whose exec is gone
 // -- the machine lost power mid-run, or exec was killed too hard to write its
 // ending down -- as lost, once, and reports each as trouble. A run is gone when
@@ -308,22 +315,33 @@ func findLost(db *sql.DB, t time.Time) {
 		found = append(found, s)
 	}
 	rows.Close()
+	var report []stale
 	for _, s := range found {
 		if !s.replaced && runAlive(s.name) {
 			continue
 		}
 		res := mustExec(db, `UPDATE run SET outcome='lost', finished_at=?, detail=? WHERE id=? AND outcome='running'`,
 			iso(t), lostDetail, s.id)
-		if n, _ := res.RowsAffected(); n == 0 {
-			continue // its exec wrote an ending after all
-		}
-		j := lookupJob(db, s.name)
-		if j != nil && j.Notify != "never" {
-			currentRun = s.id
-			notify(j, "lost", "Scheduled job lost", j.Name+": "+lostDetail, true, nil, nil)
-			currentRun = 0
+		if n, _ := res.RowsAffected(); n == 1 { // 0: its exec wrote an ending after all
+			report = append(report, s)
 		}
 	}
+	// All at once: a power cut leaves every running run behind together, and
+	// hooks one after another could take the tick past its own time limit. Each
+	// is in the message book before its hooks ring.
+	var wg sync.WaitGroup
+	for _, s := range report {
+		j := lookupJob(db, s.name)
+		if j == nil || j.Notify == "never" {
+			continue
+		}
+		wg.Add(1)
+		go func(j *Job, run int64) {
+			defer wg.Done()
+			notifyRun(j, run, "lost", "Scheduled job lost", j.Name+": "+lostDetail, true, nil, nil)
+		}(j, s.id)
+	}
+	wg.Wait()
 }
 
 func record(db *sql.DB, j *Job, dueAt time.Time, late int64, outcome, detail, unit string) {

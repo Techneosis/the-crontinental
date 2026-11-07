@@ -7,6 +7,7 @@ package main
 // systemd refusing a second unit of the same name is the overlap guard.
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -138,9 +139,15 @@ func runTool(name string, args ...string) (stdout, stderr []byte, err error) {
 
 // runAlive says whether a run the ledger records as running is really in
 // progress: its unit is still up. It only asks; it never touches the unit.
-// When the user manager can't be asked at all, the ledger is believed.
+// When the user manager can't be asked at all, or doesn't answer within
+// aliveTimeout, the ledger is believed.
 func runAlive(name string) bool {
-	out, _, _ := runTool("systemctl", "--user", "is-active", unitName(name))
+	ctx, cancel := context.WithTimeout(context.Background(), aliveTimeout)
+	defer cancel()
+	out, _ := exec.CommandContext(ctx, "systemctl", "--user", "is-active", unitName(name)).Output()
+	if ctx.Err() != nil {
+		return true
+	}
 	switch strings.TrimSpace(string(out)) {
 	case "inactive", "failed":
 		return false

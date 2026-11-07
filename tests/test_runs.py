@@ -147,6 +147,18 @@ class Runs(unittest.TestCase):
         self.cli("tick")
         self.assertEqual(self.runs(name), [("lost", None, "its run died without finishing")])
 
+    def test_a_failed_dispatch_doesnt_hide_a_run_in_progress(self):
+        name = self.book("errlive", "sleep 3", "--forever")
+        self.cli("run", name)
+        self.wait_running(name)
+        with sqlite3.connect(self.db) as c:
+            c.execute("INSERT INTO run (job_id, started_at, finished_at, outcome, detail) SELECT id, ?, ?,"
+                      " 'error', 'could not start' FROM job WHERE name=?",
+                      (datetime.now(timezone.utc).isoformat(timespec="seconds"),) * 2 + (name,))
+        self.assertEqual(self.state(name)[0], "running")
+        self.wait_for(name, 2)
+        self.assertEqual(self.state(name)[0], "failed")  # the error is its last word, once the run ends
+
     def test_the_tick_leaves_a_live_run_alone(self):
         name = self.book("alive", "sleep 4", "--forever")
         self.cli("run", name)

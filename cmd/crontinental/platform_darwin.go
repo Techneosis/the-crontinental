@@ -11,6 +11,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"database/sql"
 	"fmt"
 	"io"
@@ -114,12 +115,16 @@ func guardRun(name string) (runGuard, bool) {
 	return g, true
 }
 
+// write replaces the file's contents. It writes first and trims after, so a
+// reader never finds it empty: what it says only ever grows ("pid", then
+// "pid pgid").
 func (g runGuard) write(s string) {
 	if g.f == nil {
 		return
 	}
-	_ = g.f.Truncate(0)
-	_, _ = g.f.WriteAt([]byte(s+"\n"), 0)
+	b := []byte(s + "\n")
+	_, _ = g.f.WriteAt(b, 0)
+	_ = g.f.Truncate(int64(len(b)))
 }
 
 // started records the command's process group beside exec's own pid.
@@ -300,9 +305,12 @@ func showLog(name string, lines int, follow bool) {
 }
 
 // runAlive says whether a run the ledger records as running is really in
-// progress: the exec named in its lock file is still alive. It reads the file
-// rather than trying the lock, because a probe that held the lock for even a
-// moment would make a run starting at that moment refuse itself as an overlap.
+// progress: the exec named in its lock file is still alive, and is still this
+// job's exec (the file outlives its run, so the pid may since have gone to some
+// other process). It reads the file rather than trying the lock, because a
+// probe that held the lock for even a moment would make a run starting at that
+// moment refuse itself as an overlap. A process table that doesn't answer
+// within aliveTimeout is no answer, and the ledger is believed.
 func runAlive(name string) bool {
 	data, err := os.ReadFile(lockPath(name))
 	if err != nil {
@@ -319,17 +327,14 @@ func runAlive(name string) bool {
 	if err := syscall.Kill(pid, 0); err != nil && err != syscall.EPERM {
 		return false
 	}
-	// The file outlives its run, so the pid may since have gone to some other
-	// process: it counts only while it is still this job's exec.
-	out, err := exec.Command("ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), aliveTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "ps", "-o", "args=", "-p", strconv.Itoa(pid)).Output()
+	if ctx.Err() != nil {
+		return true
+	}
 	if err != nil {
 		return false
 	}
-	f := strings.Fields(string(out))
-	for i := 0; i+1 < len(f); i++ {
-		if f[i] == "exec" && f[i+1] == name {
-			return true
-		}
-	}
-	return false
+	return isExecOf(strings.TrimSpace(string(out)), name)
 }

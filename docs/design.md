@@ -45,7 +45,12 @@ The tick never *runs* a job. It reads the table, finds what is due, and launches
 each one as `crontinental-job-<name>.service`, then returns — measured at
 ~44ms. That is what buys per-job cgroups, per-job journal streams, and per-job
 timeouts without a single per-job file, and what guarantees one wedged job can
-neither delay the tick nor starve another job.
+neither delay the tick nor starve another job. The one thing it does after
+dispatching is look in on runs still marked running (see Reading what
+happened): a process check each, capped at 3s, and, for any it finds lost, the
+hooks, all at once, capped at 10s. So a round with nothing running stays at
+milliseconds, and one that finds lost runs costs seconds, never a due job's
+start.
 
 ## The command
 
@@ -313,7 +318,8 @@ and still that job's `exec`. macOS deliberately reads the file rather than
 trying the lock: a probe that held it for a moment would turn away a run
 starting at that moment as an overlap. `list` and `show` only read.
 
-The tick writes it down. Each round, a run still marked `running` that started
+The tick writes it down. Each round, after it has dispatched what was due, a
+run still marked `running` that started
 more than a minute ago is asked after the same way, and one whose exec is gone,
 or that has a later run of the same job behind it (which could not have started
 while it held the job; an `overlap`, `skipped` or `error` doesn't count), becomes
@@ -323,8 +329,17 @@ finishing". It is closed once (the update is conditional on still being
 `CRONTINENTAL_RUN` set to that run, and `show` gives it no duration, since its
 end is not known. The minute's grace is a margin, not the guard: exec takes its
 lock before it writes the run row, and on Linux writes it from inside the run's
-own unit. If the exec was alive after all and finishes later, its own ending
-overwrites `lost`. No schema change: `outcome` is text, and `lost` is one more
+own unit. Each process check is capped at 3s; one that doesn't answer is no
+answer, and the ledger is believed (the run stays `running`). The lost runs are
+reported together, each in the message book before its hooks ring, so a power
+cut that leaves many costs one hook timeout, not one each. If the exec was
+alive after all and finishes later, its own ending overwrites `lost`, and its
+end-of-run report goes out as usual: the truth wins over the tick's guess.
+`list`'s mark shows the last run that started when a `skipped` or `overlap`
+comes after trouble, so a lost run isn't covered up by the skip a power cut
+with `catchup=skip` leaves behind it. `crontinental exec` is the run's own
+process, not for running by hand: on Linux one outside its unit is taken for
+lost after the minute's grace. No schema change: `outcome` is text, and `lost` is one more
 value of it.
 
 A job's output is never captured into the database — it streams to the journal

@@ -113,18 +113,19 @@ round a minute, the only one on staff with a key to the Ledger's schedule. On
 each round they:
 
 1. send up the cleaners for anyone who left more than three days ago;
-2. look in on every room the books still have occupied, and if its Steward
+2. show out anyone whose checkout date has arrived;
+3. move each due guest's next reservation along *before* showing them up, so
+   a guest who can't be seated is never re-seated every minute forever;
+4. hand each due guest a room, without waiting to see how the stay goes;
+5. look in on every room the books still have occupied, and if its Steward
    is gone (the building lost power, or the Steward was struck down too
    suddenly to write anything), write the stay down as `lost` and tell the
-   Management, once;
-3. show out anyone whose checkout date has arrived;
-4. move each due guest's next reservation along *before* showing them up, so
-   a guest who can't be seated is never re-seated every minute forever;
-5. hand each due guest a room, and return to the desk without waiting to see
-   how the stay goes.
+   Management, once.
 
 The round takes a few dozen milliseconds. No single guest can hold up the
-Concierge, or the guest behind them.
+Concierge, or the guest behind them: the look-in on occupied rooms, which can
+take a few seconds when there is bad news to telephone, comes after everyone
+due has been shown up.
 
 **The Room Steward** (`crontinental exec`). Sits inside every room
 for the length of the stay, because something must outlast the guest to write

@@ -4,8 +4,10 @@ Description=Scheduled command tick (one-off and recurring jobs)
 [Timer]
 # One minute is the resolution of the whole scheduler: a job can be no more
 # precise than this tick, and `crontinental` refuses intervals shorter
-# than it for that reason. The tick itself only reads a table and spawns what is
-# due, so it costs a few milliseconds even when it finds work.
+# than it for that reason. The tick itself reads a table and spawns what is
+# due, so it costs a few milliseconds even when it finds work. After that it
+# looks in on runs still marked running, which can take seconds when it finds
+# one whose process died (it rings the hooks), but never delays a dispatch.
 OnBootSec=30s
 OnUnitActiveSec=1min
 

@@ -16,9 +16,19 @@ type lastRun struct {
 	ok      bool
 }
 
+// lastOutcome is the job's latest run's outcome, for list's mark. A run that
+// never started (skipped, overlap) doesn't cover up trouble before it: a power
+// cut with catchup=skip leaves a lost run and then a skipped one.
 func lastOutcome(db *sql.DB, jobID int64) lastRun {
 	var o string
 	err := db.QueryRow("SELECT outcome FROM run WHERE job_id=? ORDER BY id DESC LIMIT 1", jobID).Scan(&o)
+	if err == nil && (o == "skipped" || o == "overlap") {
+		var before string
+		if db.QueryRow(`SELECT outcome FROM run WHERE job_id=? AND outcome NOT IN ('skipped','overlap')
+			ORDER BY id DESC LIMIT 1`, jobID).Scan(&before) == nil && badEndings[before] {
+			o = before
+		}
+	}
 	return lastRun{o, err == nil}
 }
 
@@ -136,22 +146,24 @@ var badEndings = map[string]bool{"fail": true, "killed": true, "error": true, "l
 // last run that did is the one that counts. A run in progress beats a pause:
 // disabling a job doesn't stop the run it already has.
 func jobState(db *sql.DB, j *Job) (string, *runningRun) {
-	var last string
-	var lastID int64
+	// The run in progress, if there is one: the latest marked running with no
+	// later run behind it that started, the same rule the tick's findLost uses.
+	var runID int64
 	var started string
-	err := db.QueryRow(`SELECT id, outcome, started_at FROM run WHERE job_id=?
-		AND outcome NOT IN ('skipped','overlap') ORDER BY id DESC LIMIT 1`, j.ID).Scan(&lastID, &last, &started)
-	if err != nil {
-		last = ""
-	}
-	if last == "running" {
+	err := db.QueryRow(`SELECT r.id, r.started_at FROM run r WHERE r.job_id=? AND r.outcome='running'
+		AND NOT EXISTS (SELECT 1 FROM run n WHERE n.job_id=r.job_id AND n.id>r.id
+			AND n.outcome NOT IN ('overlap','skipped','error'))
+		ORDER BY r.id DESC LIMIT 1`, j.ID).Scan(&runID, &started)
+	if err == nil {
 		if runAlive(j.Name) {
-			t := parseISO(started)
-			return "running", &runningRun{Run: lastID, StartedAt: started,
-				ElapsedSec: int64(max(0, now().Sub(t).Seconds()))}
+			return "running", &runningRun{Run: runID, StartedAt: started,
+				ElapsedSec: int64(max(0, now().Sub(parseISO(started)).Seconds()))}
 		}
-		return "failed", nil
+		return "failed", nil // gone, and not yet written down as lost
 	}
+	var last string
+	_ = db.QueryRow(`SELECT outcome FROM run WHERE job_id=? AND outcome NOT IN ('skipped','overlap','running')
+		ORDER BY id DESC LIMIT 1`, j.ID).Scan(&last)
 	switch {
 	case j.Enabled == 0 && !j.FinishedAt.Valid:
 		return "paused", nil

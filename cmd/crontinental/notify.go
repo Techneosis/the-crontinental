@@ -112,8 +112,17 @@ func notify(j *Job, kind, headline, body string, critical bool, status, elapsed 
 	return notifyTagged(j, nil, kind, headline, body, critical, status, elapsed)
 }
 
+// notifyRun is notify about a run other than this process's own, for the tick.
+func notifyRun(j *Job, run int64, kind, headline, body string, critical bool, status, elapsed *int) int {
+	return notifyEvent(j, nil, run, kind, headline, body, critical, status, elapsed)
+}
+
 // notifyTagged is notify with extra tags laid over the job's, for one message.
 func notifyTagged(j *Job, extra map[string]string, kind, headline, body string, critical bool, status, elapsed *int) int {
+	return notifyEvent(j, extra, runOf(), kind, headline, body, critical, status, elapsed)
+}
+
+func notifyEvent(j *Job, extra map[string]string, run int64, kind, headline, body string, critical bool, status, elapsed *int) int {
 	if j == nil {
 		j = &Job{}
 	}
@@ -133,7 +142,7 @@ func notifyTagged(j *Job, extra map[string]string, kind, headline, body string, 
 		ev.Tags[k] = v
 	}
 	ev.Host, _ = os.Hostname()
-	ev.Run = runOf()
+	ev.Run = run
 	recordMessage(&ev)
 
 	hs := hooks()

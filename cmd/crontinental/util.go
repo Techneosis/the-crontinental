@@ -214,3 +214,11 @@ func truncate(s string, n int) string {
 	}
 	return string(r[:n])
 }
+
+// isExecOf says whether a command line is crontinental's exec for this job: the
+// binary named crontinental (by any path), then exec, then the name, exactly.
+// (macOS reads it from ps to tell its own run from a process that reused
+// the pid.)
+func isExecOf(args, name string) bool {
+	return regexp.MustCompile(`(^|/)crontinental exec ` + regexp.QuoteMeta(name) + `( |$)`).MatchString(args)
+}

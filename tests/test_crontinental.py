@@ -710,6 +710,28 @@ class Notify(Ledger):
         self.assertIn("its run died without finishing", lost_line)
         self.assertNotRegex(lost_line, r"\d+s ")  # no duration: its end is unknown
 
+    def test_every_lost_run_is_reported_in_one_round(self):
+        out = self.recorder()
+        for name in ("a", "b", "c"):
+            self.cli("every", "1h", "--name", name, "--forever", "--", "true")
+            self.stale_run(name)
+            self.add_run(name, "ok", 0)
+        self.cli("tick")
+        self.assertEqual(sorted(ev["job"] for _, ev in self.calls(out)), ["a", "b", "c"])
+
+    def test_a_skipped_run_doesnt_cover_up_a_lost_one_in_list(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
+        self.add_run("j", "lost")
+        self.add_run("j", "skipped")  # a power cut, then catchup=skip
+        self.assertIn("LOST", self.cli("list").stdout)
+        self.assertEqual(self.states()["j"][0], "failed")
+
+    def test_a_dead_run_behind_a_later_good_one_reads_by_the_later_one(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
+        self.stale_run("j")
+        self.add_run("j", "ok", 0)
+        self.assertEqual(self.states()["j"], ("scheduled", None))
+
     def test_lost_with_notify_never_is_recorded_but_quiet(self):
         out = self.recorder()
         self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
