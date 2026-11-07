@@ -141,7 +141,8 @@ minute; that is the tick.
   --tag`, `edit --no-tag key`) reaches every hook as `CRONTINENTAL_TAG_<KEY>`,
   e.g. so a hook can send one job to a different channel. The job's command
   gets the same variables (and `CRONTINENTAL_TAGS`, all of them as JSON), so a
-  tool it calls can read them too. Crontinental gives
+  tool it calls can read them too. Tags are labels anyone can read (`show`,
+  `list --json`, every run's environment): never put a secret in one. Crontinental gives
   tags no meaning; the user's hooks do. Use one when the user asks for routing
   a hook supports (read the hook to see which tags it reads), and don't invent
   tags nobody reads.

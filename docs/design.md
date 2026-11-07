@@ -218,7 +218,9 @@ JSON object (`{}` for none). The command of every run gets its job's tags the
 same way (`CRONTINENTAL_TAG_<KEY>` and `CRONTINENTAL_TAGS`), so a tool the job
 calls can route by the booking too; like the other run variables, none is
 inherited from a run that started this one, and a `notify` inside the run still
-builds its tags from the ledger, not from them. An agent's edit that only
+builds its tags from the ledger, not from them. Tags are labels, not secrets:
+they are plain in the ledger, in `show` and `list --json`, and in every run's
+and hook's environment. An agent's edit that only
 changes tags, like `--note` and `--notify`, is not refused by the guard below.
 
 Messages can be marked seen (`seen ID... | --through ID | --all [--by WHO]`,

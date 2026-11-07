@@ -279,7 +279,10 @@ guest, as `CRONTINENTAL_TAG_TOPIC=ops` and as `"tags"` in the JSON, and what
 channel, another's only the desk. The guest is handed the same instructions at
 check-in: every stay has its booking's tags in the same variables, plus
 `CRONTINENTAL_TAGS` with the lot as JSON, so whatever the guest reports to can
-be told from the booking, without the command saying it twice.
+be told from the booking, without the command saying it twice. Tags are
+labels, not a safe: they sit in the Ledger, in `show` and `list --json`, and in
+the environment of every stay and every extension, so never put a secret in
+one.
 
 ```
 crontinental every "Mon..Fri 02:00" --name backup --forever --tag ntfy_topic=ops -- restic backup ~/work
