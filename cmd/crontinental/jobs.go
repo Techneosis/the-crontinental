@@ -119,6 +119,7 @@ func cmdAdd(o *opts, kind string) {
 		by = provenance()
 	}
 	tags := parseTags(o.tags)
+	checkTagSet(tags)
 
 	// A one-off due now is booked already fired: no next_run for the tick to find,
 	// so the run below is its only one. (Same order as the tick: advance, then

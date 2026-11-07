@@ -219,9 +219,16 @@ same way (`CRONTINENTAL_TAG_<KEY>` and `CRONTINENTAL_TAGS`), so a tool the job
 calls can route by the booking too; like the other run variables, none is
 inherited from a run that started this one, and a `notify` inside the run still
 builds its tags from the ledger, not from them. Tags are labels, not secrets:
-they are plain in the ledger, in `show` and `list --json`, and in every run's
-and hook's environment. An agent's edit that only
-changes tags, like `--note` and `--notify`, is not refused by the guard below.
+they are plain in the ledger, the message book, `show` and `list --json`, and
+in every run's and hook's environment. A run's tags are a snapshot: an edit
+reaches the next run, not one already going. Because every tag rides in every
+run's environment, where the kernel limits a single variable (128KiB on Linux),
+a value holds up to 1KiB of text (UTF-8, no NUL) and a job's set up to 8KiB as
+JSON, refused at `--tag`; a tag in the ledger that breaks those rules anyway is
+left out of the variables, and a tags column that can't be read is taken as
+none, with a line in the log, rather than stopping a run or the `edit` that
+would mend it. An agent's edit that changes tags is guarded like any other
+(below): they reach the job's command, so they change what its runs see.
 
 Messages can be marked seen (`seen ID... | --through ID | --all [--by WHO]`,
 schema v5: `seen_at` and `seen_by` on the message book, NULL until then). The
@@ -335,7 +342,7 @@ edit to a finished job says so and leaves it finished.
 Inside a Claude Code session (`CLAUDE_CODE_SESSION_ID` set), `rm`, `disable` and
 `edit` refuse a job whose `created_by` isn't this session's `claude:<id>`, and
 name who booked it, unless `--force` is passed. An edit that touches only
-`--note`, `--notify` or tags is let through; `enable` is never guarded, since it
+`--note` or `--notify` is let through; `enable` is never guarded, since it
 can't lose anything. Outside a session nothing changes.
 
 It is keyed on *this session*, not on "booked by an agent", because a person's

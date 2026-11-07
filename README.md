@@ -280,9 +280,12 @@ channel, another's only the desk. The guest is handed the same instructions at
 check-in: every stay has its booking's tags in the same variables, plus
 `CRONTINENTAL_TAGS` with the lot as JSON, so whatever the guest reports to can
 be told from the booking, without the command saying it twice. Tags are
-labels, not a safe: they sit in the Ledger, in `show` and `list --json`, and in
-the environment of every stay and every extension, so never put a secret in
-one.
+labels, not a safe: they sit in the Ledger and the message book, in `show` and
+`list --json`, and in the environment of every stay and every extension, so
+never put a secret in one. Every stay carries them, so they are kept short: a
+value up to 1KiB of text, a booking's set up to 8KiB. A guest changed at the
+desk mid-stay keeps the tags they checked in with; the change is for the next
+stay.
 
 ```
 crontinental every "Mon..Fri 02:00" --name backup --forever --tag ntfy_topic=ops -- restic backup ~/work
@@ -312,7 +315,9 @@ trouble and speaks up only when it matters. A guest also knows their own
 reservation: `CRONTINENTAL_NEXT` is when they are next due (already moved on by
 the Concierge; unset if they won't be back) and `CRONTINENTAL_UNTIL` when their
 checkout terms end (unset with no deadline), both ISO-8601, so a stay can tell
-someone when to expect its next report without stating its schedule twice. A call is a call, not a checkout,
+someone when to expect its next report without stating its schedule twice. It
+also holds the booking's tags (`CRONTINENTAL_TAG_<KEY>`, `CRONTINENTAL_TAGS`),
+as they stood when the stay began. A call is a call, not a checkout,
 so it never changes how the stay is written down. From outside the building
 (any script, any agent) the same line rings the same extensions, under no
 guest's name.

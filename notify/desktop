@@ -7,7 +7,8 @@
 #
 # The event arrives as CRONTINENTAL_* variables (and as JSON on stdin):
 # EVENT, JOB, STATUS, ELAPSED, URGENCY (critical|low), HEADLINE, BODY, LOG,
-# NOTE, HOST.
+# NOTE, HOST, MESSAGE, RUN, a TAG_<KEY> for each of the event's tags, and TAGS
+# (all of them, as a JSON object).
 
 case $(uname -s) in
   Darwin)

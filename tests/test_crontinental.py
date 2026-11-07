@@ -208,6 +208,23 @@ class Stays(Ledger):
         self.assertEqual(json.loads(env["CRONTINENTAL_TAGS"]), {})
         self.assertFalse([k for k in env if k.startswith("CRONTINENTAL_TAG_")])
 
+    def test_an_unreadable_tags_column_runs_without_tags_and_edit_mends_it(self):
+        self.cli("every", "1h", "--name", "t", "--forever", "--", "true")
+        self.sql("UPDATE job SET tags='{not json' WHERE name='t'")
+        env = self.stay_env("t")
+        self.assertEqual(json.loads(env["CRONTINENTAL_TAGS"]), {})
+        self.assertEqual(self.outcomes("t")[-1], ("ok", 0))
+        self.cli("edit", "t", "--tag", "topic=ops")
+        self.assertEqual(json.loads(self.stay_env("t")["CRONTINENTAL_TAGS"]), {"topic": "ops"})
+
+    def test_a_tag_that_cant_be_a_variable_is_left_out(self):
+        self.cli("every", "1h", "--name", "t", "--forever", "--", "true")
+        self.sql("UPDATE job SET tags=? WHERE name='t'",
+                 json.dumps({"ok": "1", "bad key": "2", "big": "x" * 5000}))
+        env = self.stay_env("t")
+        self.assertEqual(json.loads(env["CRONTINENTAL_TAGS"]), {"ok": "1"})
+        self.assertEqual([k for k in env if k.startswith("CRONTINENTAL_TAG_")], ["CRONTINENTAL_TAG_OK"])
+
     def test_a_stay_started_from_inside_another_does_not_inherit_its_tags(self):
         self.cli("every", "1h", "--name", "child", "--forever", "--tag", "own=1", "--", "true")
         env = self.stay_env("child", {**self.env, "CRONTINENTAL_TAG_PARENT": "x",
@@ -392,11 +409,20 @@ class Guard(Ledger):
         self.cli("disable", "w")
         self.cli("rm", "w")
 
-    def test_a_note_notify_or_tag_edit_is_let_through(self):
+    def test_a_note_or_notify_edit_is_let_through(self):
         self.book_as_person("w")
         self.as_session("bbbbbbbb-2222")
-        self.cli("edit", "w", "--note", "nightly backup", "--notify", "always", "--tag", "topic=ops")
+        self.cli("edit", "w", "--note", "nightly backup", "--notify", "always")
         p = self.cli("edit", "w", "--note", "x", "--timeout", "5m", ok=False)
+        self.assertIn("not going to edit", p.stderr)
+
+    def test_a_tag_edit_is_guarded_since_runs_see_tags(self):
+        self.book_as_person("w")
+        self.as_session("bbbbbbbb-2222")
+        p = self.cli("edit", "w", "--tag", "topic=ops", ok=False)
+        self.assertIn("not going to edit", p.stderr)
+        self.cli("edit", "w", "--tag", "topic=ops", "--force")
+        p = self.cli("edit", "w", "--no-tag", "topic", ok=False)
         self.assertIn("not going to edit", p.stderr)
 
     def test_enable_is_not_guarded(self):
@@ -561,6 +587,23 @@ class Notify(Ledger):
         self.assertNotIn("CRONTINENTAL_TAG_STALE", env)
         self.assertEqual(env["CRONTINENTAL_TAG_FRESH"], "y")
         self.assertEqual(json.loads(env["CRONTINENTAL_TAGS"]), {"fresh": "y"})
+
+    def test_tags_are_kept_small_and_textual(self):
+        too_long = "x" * 1025
+        self.assertEqual(self.cli("every", "1h", "--name", "j", "--forever", "--tag", f"a={too_long}",
+                                  "--", "true", ok=False).returncode, 1)
+        many = [a for i in range(10) for a in ("--tag", f"k{i}={'y' * 1000}")]
+        p = self.cli("every", "1h", "--name", "j", "--forever", *many, "--", "true", ok=False)
+        self.assertIn("in all", p.stderr)
+        self.assertIsNone(self.job("j"))
+        bad = subprocess.run([BIN, "every", "1h", "--name", "j", "--forever",
+                              "--tag", b"a=\xff\xfe", "--", "true"], env=self.env, capture_output=True)
+        self.assertEqual(bad.returncode, 1)
+        self.assertNotEqual(self.cli("notify", "--tag", f"a={too_long}", "hi", ok=False).returncode, 0)
+        self.cli("every", "1h", "--name", "j", "--forever", "--tag", "a=1", "--", "true")
+        self.cli("edit", "j", *many[:-4])  # 8 of them, and a=1: just under
+        p = self.cli("edit", "j", *many, ok=False)
+        self.assertIn("in all", p.stderr)
 
     def test_a_tag_needs_a_name_and_a_value(self):
         for bad in ("topic", "topic=", "9lives=x", "a-b=x", "=x"):

@@ -5,7 +5,8 @@
 #
 # then set TOPIC below (anyone who knows a topic on ntfy.sh can read it, so
 # make it unguessable), or point SERVER at your own ntfy. A job booked with
-# --tag ntfy_topic=<topic> goes to that topic instead.
+# --tag ntfy_topic=<topic> goes to that topic instead. (Every tag arrives as
+# CRONTINENTAL_TAG_<KEY>, and all of them as JSON in CRONTINENTAL_TAGS.)
 
 SERVER=https://ntfy.sh
 TOPIC=${CRONTINENTAL_TAG_NTFY_TOPIC:-change-me}

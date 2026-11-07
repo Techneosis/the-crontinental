@@ -182,6 +182,7 @@ func cmdNotify(o *opts) {
 		die("nothing to say")
 	}
 	extra := parseTags(o.tags)
+	checkTagSet(extra)
 	var j *Job
 	if name := os.Getenv("CRONTINENTAL_JOB"); name != "" {
 		j = lookupJob(connect(), name)

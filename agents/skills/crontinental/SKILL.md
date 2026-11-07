@@ -137,15 +137,17 @@ minute; that is the tick.
   notification goes (desktop, phone, webhook) is the user's hooks in
   `~/.config/crontinental/notify.d/`, not a job setting; `show <name>` names
   them, or says nobody is told. Don't add or change hooks unless asked.
-- **Tags are words for those hooks.** `--tag key=value` (repeatable; `edit
-  --tag`, `edit --no-tag key`) reaches every hook as `CRONTINENTAL_TAG_<KEY>`,
-  e.g. so a hook can send one job to a different channel. The job's command
-  gets the same variables (and `CRONTINENTAL_TAGS`, all of them as JSON), so a
-  tool it calls can read them too. Tags are labels anyone can read (`show`,
-  `list --json`, every run's environment): never put a secret in one. Crontinental gives
-  tags no meaning; the user's hooks do. Use one when the user asks for routing
-  a hook supports (read the hook to see which tags it reads), and don't invent
-  tags nobody reads.
+- **Tags are words for the hooks and for the job's command.** `--tag
+  key=value` (repeatable; `edit --tag`, `edit --no-tag key`) reaches every hook
+  as `CRONTINENTAL_TAG_<KEY>`, e.g. so a hook can send one job to a different
+  channel, and every run's command gets the same variables plus
+  `CRONTINENTAL_TAGS` (all of them as JSON), so a tool the job calls can read
+  them too. A run gets the tags as they were when it started. Crontinental
+  gives tags no meaning; the hooks and tools that read them do. Use one when
+  the user asks for routing a hook or tool supports (read it to see which tags
+  it reads), and don't invent tags nobody reads. Tags are labels anyone can
+  read (`show`, `list --json`, the message book, every run's environment):
+  never put a secret in one. A value holds up to 1KiB, a job's set 8KiB.
 - **A job can say something itself.** When the user wants to hear a result, not
   just a failure ("tell me what the backup found", "let me know when it's
   live"), put `crontinental notify "…"` in the command at that point. It goes to
@@ -174,7 +176,8 @@ hooks in `seen.d/` take their copies down. Mark one seen when the user has
 plainly dealt with it in the session, not on a guess.
 
 Save `--urgent` (critical) for things the user has to act on. Use `--tag` only
-with keys the user's hooks read. Outside a job the message goes under no job's
+with keys the user's hooks read; a message's tags are kept in the message book
+with it, so never a secret. Outside a job the message goes under no job's
 name, so give it a `--title` when the text alone wouldn't say where it came
 from.
 
