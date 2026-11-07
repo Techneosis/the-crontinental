@@ -272,7 +272,8 @@ so a device can tie its notification to the record, and the run it came from
 be written costs the record, never the notification. The tick deletes entries
 after 30 days.
 
-A run has exactly one ending. On Linux a stop (`RuntimeMaxSec`, `rm`) signals
+A run has exactly one ending (a `lost` one is the tick's, below under
+Reading what happened). On Linux a stop (`RuntimeMaxSec`, `rm`) signals
 `exec` and the command together, so the signal handler and the command's exit
 race to record it; a lock lets the first one write it down and notify, and a
 command that died of SIGTERM in a stopped unit counts as `killed` either way.
@@ -297,7 +298,7 @@ or null):
 |---|---|
 | `running` | the last run that started is still marked running, and the platform agrees it is alive |
 | `paused` | disabled and not finished |
-| `failed` | the last run that started ended `fail`, `killed` or `error`, or is marked running but is not alive |
+| `failed` | the last run that started ended `fail`, `killed`, `error` or `lost`, or is marked running but is not alive |
 | `done` | finished, waiting to be deleted |
 | `scheduled` | anything else |
 
@@ -310,7 +311,21 @@ is-active` on the run's unit (when the user manager can't be asked at all, the
 ledger is believed); on macOS the exec pid in the job's lock file, still alive
 and still that job's `exec`. macOS deliberately reads the file rather than
 trying the lock: a probe that held it for a moment would turn away a run
-starting at that moment as an overlap. Nothing here writes to the ledger.
+starting at that moment as an overlap. `list` and `show` only read.
+
+The tick writes it down. Each round, a run still marked `running` that started
+more than a minute ago is asked after the same way, and one whose exec is gone,
+or that has a later run of the same job behind it (which could not have started
+while it held the job; an `overlap`, `skipped` or `error` doesn't count), becomes
+`lost`: `finished_at` the round's time, no status, detail "its run died without
+finishing". It is closed once (the update is conditional on still being
+`running`), reported as a `lost` event, critical, unless `--notify never`, with
+`CRONTINENTAL_RUN` set to that run, and `show` gives it no duration, since its
+end is not known. The minute's grace is a margin, not the guard: exec takes its
+lock before it writes the run row, and on Linux writes it from inside the run's
+own unit. If the exec was alive after all and finishes later, its own ending
+overwrites `lost`. No schema change: `outcome` is text, and `lost` is one more
+value of it.
 
 A job's output is never captured into the database — it streams to the journal
 under the job's own unit, so `log` has exactly one source of truth and a chatty

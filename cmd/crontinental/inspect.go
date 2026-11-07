@@ -60,7 +60,7 @@ func cmdList(o *opts) {
 		w = max(w, len([]rune(j.Name)))
 	}
 	marks := map[string]string{"ok": "ok", "done": "done", "fail": "FAIL", "killed": "KILLED",
-		"running": "running", "skipped": "skipped", "overlap": "overlap", "error": "ERROR"}
+		"running": "running", "skipped": "skipped", "overlap": "overlap", "error": "ERROR", "lost": "LOST"}
 	for _, j := range jobs {
 		lr := lastOutcome(db, j.ID)
 		state := ""
@@ -119,15 +119,16 @@ func listJSON(db *sql.DB, q string) {
 }
 
 // badEndings are the outcomes of a run that ended in trouble.
-var badEndings = map[string]bool{"fail": true, "killed": true, "error": true}
+var badEndings = map[string]bool{"fail": true, "killed": true, "error": true, "lost": true}
 
 // jobState is what a job is doing, as one word, and the run in progress if
 // there is one (nil otherwise):
 //
 //	running    a run is in progress, and the platform agrees it is alive
 //	paused     disabled, and not finished
-//	failed     its last run ended in trouble, or was left marked running by an
-//	           exec that died too hard to write down its ending
+//	failed     its last run ended in trouble (lost included), or is still
+//	           marked running but its exec is gone and the tick hasn't yet
+//	           written it down as lost
 //	done       finished, waiting to be deleted
 //	scheduled  anything else: waiting for next_run
 //
@@ -370,7 +371,8 @@ func cmdShow(o *opts) {
 			exit = "exit " + strconv.FormatInt(status.Int64, 10)
 		}
 		dur := ""
-		if started.Valid && finished.Valid {
+		// A lost run's finish is when the tick noticed, not when it stopped.
+		if started.Valid && finished.Valid && outcome != "lost" {
 			dur = fmt.Sprintf("%ds", int(parseISO(finished.String).Sub(parseISO(started.String)).Seconds()))
 		}
 		lateTxt := ""

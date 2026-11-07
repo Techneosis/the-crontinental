@@ -198,6 +198,7 @@ func cmdTick() {
 	db := connect()
 	t := now()
 	reap(db, t)
+	findLost(db, t)
 
 	rows, err := db.Query("SELECT "+jobCols+" FROM job WHERE enabled=1 AND next_run IS NOT NULL"+
 		" AND next_run<=? ORDER BY next_run", iso(t))
@@ -270,6 +271,59 @@ func reap(db *sql.DB, t time.Time) {
 	mustExec(db, `DELETE FROM job WHERE finished_at IS NOT NULL AND finished_at<? AND NOT EXISTS
 		(SELECT 1 FROM run WHERE run.job_id=job.id AND outcome='running' AND started_at>=?)`,
 		cutoff, cutoff)
+}
+
+// lostGraceSec: a run is asked after only once it has been marked running this
+// long, so one in its first moments is never taken for a dead one. (exec takes
+// its lock before it writes the run, and on Linux writes it from inside the
+// run's unit, so this is a margin, not the guard.)
+const lostGraceSec = 60
+
+const lostDetail = "its run died without finishing"
+
+// findLost closes the runs the ledger still has as running whose exec is gone
+// -- the machine lost power mid-run, or exec was killed too hard to write its
+// ending down -- as lost, once, and reports each as trouble. A run is gone when
+// the platform says so (runAlive), or when a later run of the same job started,
+// which it couldn't have while this one held the job.
+func findLost(db *sql.DB, t time.Time) {
+	rows, err := db.Query(`SELECT r.id, r.job_id, j.name, EXISTS (SELECT 1 FROM run n WHERE n.job_id=r.job_id
+		AND n.id>r.id AND n.outcome NOT IN ('overlap','skipped','error'))
+		FROM run r JOIN job j ON j.id=r.job_id WHERE r.outcome='running' AND r.started_at<=?`,
+		iso(t.Add(-lostGraceSec*time.Second)))
+	if err != nil {
+		die("ledger: %v", err)
+	}
+	type stale struct {
+		id, job  int64
+		name     string
+		replaced bool
+	}
+	var found []stale
+	for rows.Next() {
+		var s stale
+		if err := rows.Scan(&s.id, &s.job, &s.name, &s.replaced); err != nil {
+			die("ledger: %v", err)
+		}
+		found = append(found, s)
+	}
+	rows.Close()
+	for _, s := range found {
+		if !s.replaced && runAlive(s.name) {
+			continue
+		}
+		res := mustExec(db, `UPDATE run SET outcome='lost', finished_at=?, detail=? WHERE id=? AND outcome='running'`,
+			iso(t), lostDetail, s.id)
+		if n, _ := res.RowsAffected(); n == 0 {
+			continue // its exec wrote an ending after all
+		}
+		j := lookupJob(db, s.name)
+		if j != nil && j.Notify != "never" {
+			currentRun = s.id
+			notify(j, "lost", "Scheduled job lost", j.Name+": "+lostDetail, true, nil, nil)
+			currentRun = 0
+		}
+	}
 }
 
 func record(db *sql.DB, j *Job, dueAt time.Time, late int64, outcome, detail, unit string) {

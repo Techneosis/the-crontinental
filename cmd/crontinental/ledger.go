@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS run (
   started_at  TEXT,
   finished_at TEXT,
   status      INTEGER,                     -- process exit code; NULL while running
-  outcome     TEXT NOT NULL,               -- 'running'|'ok'|'done'|'fail'|'killed'|'skipped'|'overlap'|'error'
+  outcome     TEXT NOT NULL,               -- 'running'|'ok'|'done'|'fail'|'killed'|'skipped'|'overlap'|'error'|'lost'
   late_sec    INTEGER,
   detail      TEXT
 );
@@ -61,7 +61,7 @@ const messageSchema = `
 CREATE TABLE IF NOT EXISTS message (
   id        INTEGER PRIMARY KEY,
   at        TEXT NOT NULL,                 -- ISO-8601 UTC
-  event     TEXT NOT NULL,                 -- fail|killed|error|unstartable|done|ok|message
+  event     TEXT NOT NULL,                 -- fail|killed|error|unstartable|lost|done|ok|message
   job       TEXT,                          -- NULL for a message from outside any job
   run_id    INTEGER,                       -- the run it is about, or was sent from
   urgency   TEXT NOT NULL,                 -- critical|low

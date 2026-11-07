@@ -113,10 +113,14 @@ round a minute, the only one on staff with a key to the Ledger's schedule. On
 each round they:
 
 1. send up the cleaners for anyone who left more than three days ago;
-2. show out anyone whose checkout date has arrived;
-3. move each due guest's next reservation along *before* showing them up, so
+2. look in on every room the books still have occupied, and if its Steward
+   is gone (the building lost power, or the Steward was struck down too
+   suddenly to write anything), write the stay down as `lost` and tell the
+   Management, once;
+3. show out anyone whose checkout date has arrived;
+4. move each due guest's next reservation along *before* showing them up, so
    a guest who can't be seated is never re-seated every minute forever;
-4. hand each due guest a room, and return to the desk without waiting to see
+5. hand each due guest a room, and return to the desk without waiting to see
    how the stay goes.
 
 The round takes a few dozen milliseconds. No single guest can hold up the
@@ -124,7 +128,8 @@ Concierge, or the guest behind them.
 
 **The Room Steward** (`crontinental exec`). Sits inside every room
 for the length of the stay, because something must outlast the guest to write
-down how they left: `ok`, `fail`, `killed`, or `done`. When a guest settles up
+down how they left: `ok`, `fail`, `killed`, or `done`. (A stay whose Steward
+never got to write it is the Concierge's to close, as `lost`.) When a guest settles up
 with a 99, it is the Steward who closes the reservation.
 
 **The Cleaners.** Three days after a guest checks out, their entry and its
@@ -261,7 +266,7 @@ wants it whole, as JSON on stdin:
 
 | variable | |
 |---|---|
-| `CRONTINENTAL_EVENT` | `fail`, `killed`, `error`, `unstartable`, `done`, `ok`, `message` |
+| `CRONTINENTAL_EVENT` | `fail`, `killed`, `error`, `unstartable`, `lost`, `done`, `ok`, `message` |
 | `CRONTINENTAL_JOB` | the guest's name (empty for a message from outside any stay) |
 | `CRONTINENTAL_STATUS`, `_ELAPSED` | exit status and seconds, when there are any |
 | `CRONTINENTAL_URGENCY` | `critical` for trouble, `low` otherwise |
@@ -372,15 +377,16 @@ crontinental upgrade           refit the hotel to the latest release (--check on
 |---|---|
 | `running` | is in their room right now, and the building agrees (`running` holds the stay's number, when it began, and for how long) |
 | `paused` | has their room held (`disable`) |
-| `failed` | left badly last time, or was found gone from a room the books still had them in |
+| `failed` | left badly last time (`lost` included), or is gone from a room the books still have them in |
 | `done` | has checked out, and is waiting for the cleaners |
 | `scheduled` | is expected at `next_run` |
 
 The books alone don't make a guest `running`: the desk asks the building (on
 Linux, whether the stay's unit is still up; on macOS, whether the Steward named
 on the lock is still in the room). A Steward who was struck down too suddenly to
-write anything leaves a stay that only *looks* occupied, and the board shows it
-as trouble, not as a guest at home. Stays that never began (`skipped`,
+write anything leaves a stay that only *looks* occupied: the board shows it as
+trouble at once, and the Concierge's next round (after a minute's grace) writes
+it down as `lost`. Stays that never began (`skipped`,
 `overlap`) say nothing about how a guest is doing. A held guest still in their
 room reads `running` until they leave.
 

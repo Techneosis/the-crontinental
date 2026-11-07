@@ -143,6 +143,20 @@ class Runs(unittest.TestCase):
                       " FROM job WHERE name=?",
                       ((datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(timespec="seconds"), name))
         self.assertEqual(self.state(name), ("failed", None))
+        # and the tick writes it down, once its grace is past
+        self.cli("tick")
+        self.assertEqual(self.runs(name), [("lost", None, "its run died without finishing")])
+
+    def test_the_tick_leaves_a_live_run_alone(self):
+        name = self.book("alive", "sleep 4", "--forever")
+        self.cli("run", name)
+        self.wait_running(name)
+        with sqlite3.connect(self.db) as c:  # as if it had been going a while
+            c.execute("UPDATE run SET started_at=? WHERE outcome='running'",
+                      ((datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat(timespec="seconds"),))
+        self.cli("tick")
+        self.assertEqual([r[0] for r in self.runs(name)], ["running"])
+        self.assertEqual(self.wait_for(name)[0][:2], ("ok", 0))
 
     def name(self, short):
         name = self.prefix + short

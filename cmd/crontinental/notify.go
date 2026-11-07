@@ -91,7 +91,7 @@ func hooksIn(dir string) []string {
 // none (a run that never started has no exit status).
 type event struct {
 	ID       int64             `json:"id,omitempty"`  // in the message book; absent if it couldn't be written
-	Event    string            `json:"event"`         // fail, killed, error, unstartable, done, ok, message
+	Event    string            `json:"event"`         // fail, killed, error, unstartable, lost, done, ok, message
 	Job      string            `json:"job"`           // empty for a message sent from outside any job
 	Run      int64             `json:"run,omitempty"` // the run it is about, or was sent from
 	Status   *int              `json:"status,omitempty"`

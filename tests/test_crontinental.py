@@ -689,6 +689,50 @@ class Notify(Ledger):
         self.add_run("j", "overlap")
         self.assertEqual(self.states()["j"][0], "scheduled")
 
+    def stale_run(self, name, minutes=5):
+        self.sql("INSERT INTO run (job_id, started_at, outcome) SELECT id, ?, 'running'"
+                 " FROM job WHERE name=?", ago(minutes=minutes), name)
+
+    def test_a_run_left_running_behind_a_later_one_is_lost_once_and_reported(self):
+        out = self.recorder()
+        self.cli("every", "1h", "--name", "j", "--forever", "--", "true")
+        self.stale_run("j", minutes=10)
+        self.add_run("j", "ok", 0)  # a later run started, so the first one's exec is gone
+        self.cli("tick")
+        self.cli("tick")  # and only once
+        outcomes = self.sql("SELECT outcome, detail, finished_at IS NOT NULL FROM run ORDER BY id")
+        self.assertEqual(outcomes[0], ("lost", "its run died without finishing", 1))
+        [(env, ev)] = self.calls(out)
+        self.assertEqual((ev["event"], ev["job"], ev["urgency"]), ("lost", "j", "critical"))
+        [(first,)] = self.sql("SELECT id FROM run ORDER BY id LIMIT 1")
+        self.assertEqual(ev["run"], first)
+        lost_line, = [l for l in self.cli("show", "j").stdout.splitlines() if " lost " in l]
+        self.assertIn("its run died without finishing", lost_line)
+        self.assertNotRegex(lost_line, r"\d+s ")  # no duration: its end is unknown
+
+    def test_lost_with_notify_never_is_recorded_but_quiet(self):
+        out = self.recorder()
+        self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
+        self.stale_run("j")
+        self.add_run("j", "ok", 0)
+        self.cli("tick")
+        self.assertEqual(self.sql("SELECT outcome FROM run ORDER BY id LIMIT 1"), [("lost",)])
+        self.assertEqual(self.calls(out), [])
+
+    def test_a_lost_last_run_reads_failed(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
+        self.add_run("j", "lost")
+        self.assertEqual(self.states()["j"], ("failed", None))
+        self.assertIn("LOST", self.cli("list").stdout)
+
+    def test_a_run_behind_an_overlap_is_not_taken_for_lost(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
+        self.stale_run("j")
+        self.add_run("j", "overlap")  # refused because the first was still going
+        self.sql("UPDATE run SET started_at=? WHERE outcome='running'", ago(seconds=10))  # inside the grace
+        self.cli("tick")
+        self.assertEqual(self.sql("SELECT outcome FROM run ORDER BY id"), [("running",), ("overlap",)])
+
     def test_a_finished_job_whose_last_run_failed_reads_failed(self):
         self.cli("every", "1h", "--name", "j", "--until-done", "--", "true")
         self.add_run("j", "fail", 1)
