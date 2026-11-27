@@ -294,6 +294,33 @@ func lostGrace() time.Duration {
 
 const lostDetail = "its run died without finishing"
 
+// lostRestartDetail: the run started before the machine last booted, so it
+// went down with the machine rather than on its own. Said so, so nobody hunts
+// for a fault in the job (or in Crontinental) that a power cut or a crash
+// explains.
+const lostRestartDetail = lostDetail + ": the machine restarted while it ran"
+
+// bootTime is when the machine last started, or CRONTINENTAL_BOOT_TIME (unix
+// seconds; the tests) when that is set.
+func bootTime() (time.Time, bool) {
+	if v, ok := os.LookupEnv("CRONTINENTAL_BOOT_TIME"); ok {
+		n, err := strconv.ParseInt(v, 10, 64)
+		return time.Unix(n, 0), err == nil
+	}
+	return platformBootTime()
+}
+
+// lostDetailFor words a lost run's ending: a run that started before the last
+// boot was cut off by the restart.
+func lostDetailFor(started string) string {
+	if boot, ok := bootTime(); ok {
+		if parseISO(started).Before(boot) {
+			return lostRestartDetail
+		}
+	}
+	return lostDetail
+}
+
 // aliveTimeout bounds each process check: a user manager or process table that
 // doesn't answer in time is no answer, and the ledger is believed.
 const aliveTimeout = 3 * time.Second
@@ -361,15 +388,20 @@ func findLost(db *sql.DB, t time.Time) {
 		}(i, s)
 	}
 	checks.Wait()
-	var report []stale
+	type lost struct {
+		stale
+		detail string
+	}
+	var report []lost
 	for i, s := range found {
 		if !dead[i] {
 			continue
 		}
+		detail := lostDetailFor(s.started)
 		res := mustExec(db, `UPDATE run SET outcome='lost', finished_at=?, detail=? WHERE id=? AND outcome='running'`,
-			iso(t), lostDetail, s.id)
+			iso(t), detail, s.id)
 		if n, _ := res.RowsAffected(); n == 1 { // 0: its exec wrote an ending after all
-			report = append(report, s)
+			report = append(report, lost{s, detail})
 		}
 	}
 	// All at once: a power cut leaves every running run behind together, and
@@ -382,12 +414,12 @@ func findLost(db *sql.DB, t time.Time) {
 			continue
 		}
 		wg.Add(1)
-		go func(j *Job, run int64) {
+		go func(j *Job, run int64, detail string) {
 			defer wg.Done()
 			slots <- struct{}{}
 			defer func() { <-slots }()
-			notifyRun(j, run, "lost", "Scheduled job lost", j.Name+": "+lostDetail, true, nil, nil)
-		}(j, s.id)
+			notifyRun(j, run, "lost", "Scheduled job lost", j.Name+": "+detail, true, nil, nil)
+		}(j, s.id, s.detail)
 	}
 	wg.Wait()
 }

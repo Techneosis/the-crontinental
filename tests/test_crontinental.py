@@ -711,6 +711,35 @@ class Notify(Ledger):
         self.assertIn("its run died without finishing", lost_line)
         self.assertNotRegex(lost_line, r"\d+s ")  # no duration: its end is unknown
 
+    def booted(self, **kw):
+        # the machine's boot time, as the tick will read it
+        when = datetime.now(timezone.utc) - timedelta(**kw)
+        self.env["CRONTINENTAL_BOOT_TIME"] = str(int(when.timestamp()))
+
+    def test_a_run_the_machine_restarted_under_says_so(self):
+        out = self.recorder()
+        self.cli("every", "1h", "--name", "j", "--forever", "--", "true")
+        self.stale_run("j", minutes=10)
+        self.booted(minutes=3)  # up again after the run started: it went down with the machine
+        self.cli("tick")
+        restarted = "its run died without finishing: the machine restarted while it ran"
+        self.assertEqual(self.sql("SELECT outcome, detail FROM run ORDER BY id LIMIT 1"),
+                         [("lost", restarted)])
+        [(env, ev)] = self.calls(out)
+        self.assertEqual(ev["event"], "lost")
+        self.assertIn("the machine restarted while it ran", ev["body"])
+        lost_line, = [l for l in self.cli("show", "j").stdout.splitlines() if " lost " in l]
+        self.assertIn("the machine restarted while it ran", lost_line)
+
+    def test_a_run_lost_since_the_last_boot_doesnt_blame_a_restart(self):
+        self.cli("every", "1h", "--name", "j", "--forever", "--notify", "never", "--", "true")
+        self.booted(hours=2)
+        self.stale_run("j", minutes=10)
+        self.add_run("j", "ok", 0)
+        self.cli("tick")
+        self.assertEqual(self.sql("SELECT detail FROM run ORDER BY id LIMIT 1"),
+                         [("its run died without finishing",)])
+
     def test_every_lost_run_is_reported_in_one_round(self):
         out = self.recorder()
         for name in ("a", "b", "c"):

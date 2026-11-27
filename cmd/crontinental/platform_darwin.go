@@ -311,6 +311,21 @@ func showLog(name string, lines int, follow bool) {
 // Only ps saying the pid is gone (exit 1) counts as dead: a ps that fails any
 // other way, or doesn't answer within aliveTimeout, is no answer, and the
 // ledger is believed.
+// platformBootTime reads when the machine last started: kern.boottime.
+func platformBootTime() (time.Time, bool) {
+	// A struct timeval; its first 8 bytes are the seconds (both darwin targets
+	// are 64-bit little-endian). Sysctl may trim a trailing NUL of the padding.
+	raw, err := syscall.Sysctl("kern.boottime")
+	if err != nil || len(raw) < 8 {
+		return time.Time{}, false
+	}
+	var sec int64
+	for i := 7; i >= 0; i-- {
+		sec = sec<<8 | int64(raw[i])
+	}
+	return time.Unix(sec, 0), sec > 0
+}
+
 func runAlive(name string, started time.Time) (bool, string) {
 	data, err := os.ReadFile(lockPath(name))
 	if err != nil {
