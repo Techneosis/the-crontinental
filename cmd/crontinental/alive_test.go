@@ -5,6 +5,17 @@ import (
 	"time"
 )
 
+// The machine's own boot time reads, and is in the past.
+func TestPlatformBootTime(t *testing.T) {
+	boot, ok := platformBootTime()
+	if !ok {
+		t.Fatal("no boot time")
+	}
+	if !boot.Before(time.Now()) || boot.Year() < 2000 {
+		t.Fatalf("boot time %v", boot)
+	}
+}
+
 func TestIsExecOf(t *testing.T) {
 	for _, c := range []struct {
 		args, name string

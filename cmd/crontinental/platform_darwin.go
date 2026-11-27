@@ -302,6 +302,21 @@ func showLog(name string, lines int, follow bool) {
 	}
 }
 
+// platformBootTime reads when the machine last started: kern.boottime.
+func platformBootTime() (time.Time, bool) {
+	// A struct timeval; its first 8 bytes are the seconds (both darwin targets
+	// are 64-bit little-endian). Sysctl may trim a trailing NUL of the padding.
+	raw, err := syscall.Sysctl("kern.boottime")
+	if err != nil || len(raw) < 8 {
+		return time.Time{}, false
+	}
+	var sec int64
+	for i := 7; i >= 0; i-- {
+		sec = sec<<8 | int64(raw[i])
+	}
+	return time.Unix(sec, 0), sec > 0
+}
+
 // runAlive says whether a run the ledger records as running is really in
 // progress: the exec named in its lock file is alive, is this job's exec, and
 // began no later than the run (the file outlives its run, so the pid may since

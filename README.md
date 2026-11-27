@@ -120,7 +120,9 @@ each round they:
 5. look in on every room the books still have occupied, and if its Steward
    is gone (the building lost power, or the Steward was struck down too
    suddenly to write anything), write the stay down as `lost` and tell the
-   Management, once.
+   Management, once. A stay that began before the building last opened its
+   doors went down with the building, and the books say so ("the machine
+   restarted while it ran"), so nobody goes looking for a fault in the guest.
 
 A round with nothing amiss takes a few dozen milliseconds. No single guest can
 hold up the Concierge, or the guest behind them: the look-in on occupied rooms, which can

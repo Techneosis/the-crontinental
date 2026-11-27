@@ -137,6 +137,22 @@ func runTool(name string, args ...string) (stdout, stderr []byte, err error) {
 	return []byte(out.String()), []byte(errb.String()), err
 }
 
+// platformBootTime reads when the machine last started: /proc/stat's btime.
+func platformBootTime() (time.Time, bool) {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return time.Time{}, false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if f := strings.Fields(line); len(f) == 2 && f[0] == "btime" {
+			if n, err := strconv.ParseInt(f[1], 10, 64); err == nil {
+				return time.Unix(n, 0), true
+			}
+		}
+	}
+	return time.Time{}, false
+}
+
 // runAlive says whether a run the ledger records as running is really in
 // progress: its job's unit is up, and became active for this run rather than a
 // later one. It only asks; it never touches the unit. When the user manager
