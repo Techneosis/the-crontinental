@@ -302,15 +302,6 @@ func showLog(name string, lines int, follow bool) {
 	}
 }
 
-// runAlive says whether a run the ledger records as running is really in
-// progress: the exec named in its lock file is alive, is this job's exec, and
-// began no later than the run (the file outlives its run, so the pid may since
-// have gone to another process, or to the next run's exec). It reads the file
-// rather than trying the lock, because a probe that held the lock for even a
-// moment would make a run starting at that moment refuse itself as an overlap.
-// Only ps saying the pid is gone (exit 1) counts as dead: a ps that fails any
-// other way, or doesn't answer within aliveTimeout, is no answer, and the
-// ledger is believed.
 // platformBootTime reads when the machine last started: kern.boottime.
 func platformBootTime() (time.Time, bool) {
 	// A struct timeval; its first 8 bytes are the seconds (both darwin targets
@@ -326,6 +317,15 @@ func platformBootTime() (time.Time, bool) {
 	return time.Unix(sec, 0), sec > 0
 }
 
+// runAlive says whether a run the ledger records as running is really in
+// progress: the exec named in its lock file is alive, is this job's exec, and
+// began no later than the run (the file outlives its run, so the pid may since
+// have gone to another process, or to the next run's exec). It reads the file
+// rather than trying the lock, because a probe that held the lock for even a
+// moment would make a run starting at that moment refuse itself as an overlap.
+// Only ps saying the pid is gone (exit 1) counts as dead: a ps that fails any
+// other way, or doesn't answer within aliveTimeout, is no answer, and the
+// ledger is believed.
 func runAlive(name string, started time.Time) (bool, string) {
 	data, err := os.ReadFile(lockPath(name))
 	if err != nil {
